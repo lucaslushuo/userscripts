@@ -1,0 +1,17 @@
+{
+  "name": "userscripts",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A monorepo for browser userscripts.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "node scripts/build-userscripts.mjs",
+    "check": "node --check scripts/build-userscripts.mjs && npm run check --workspaces --if-present",
+    "test": "node --test scripts/*.test.mjs && npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@userscripts/gitlab-recent-projects",
+  "private": true,
+  "version": "3.3.0",
+  "description": "Quick access to recent GitLab MR repositories and global project search.",
+  "scripts": {
+    "check": "node --check src/gitlab-recent-projects.user.js",
+    "test": "node --test test/*.test.js"
+  },
+  "userscript": {
+    "source": "src/gitlab-recent-projects.user.js",
+    "output": "gitlab-recent-projects.user.js",
+    "title": "GitLab 最近 MR 仓库快捷入口"
+  }
+}
