@@ -26,6 +26,7 @@
   const MAX_SEARCH_GROUPS = 20;
   const MIN_SEARCH_QUERY_LENGTH = 2;
   const SEARCH_DEBOUNCE_MS = 350;
+  const COPY_FEEDBACK_DURATION_MS = 1600;
   const DEFAULT_OWNED_ONLY_SEARCH = true;
   const CACHE_TTL_MS = 10 * 60 * 1000;
   const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -84,6 +85,9 @@
       showMoreActions: '{project} 更多操作',
       createMergeRequest: '选择分支并创建 MR',
       viewPipelines: '查看 Pipelines',
+      copyRepositoryUrl: '复制仓库地址',
+      repositoryUrlCopied: '已复制仓库地址',
+      copyRepositoryUrlFailed: '复制失败，请检查浏览器权限',
       settings: '域名设置',
       settingsUpdateAvailable: '域名设置，有脚本更新可用',
       settingsTitle: '当前 GitLab 站点已启用',
@@ -146,6 +150,9 @@
       showMoreActions: 'More actions for {project}',
       createMergeRequest: 'Choose branches & create MR',
       viewPipelines: 'View pipelines',
+      copyRepositoryUrl: 'Copy repository URL',
+      repositoryUrlCopied: 'Repository URL copied',
+      copyRepositoryUrlFailed: 'Copy failed. Check your browser permissions',
       settings: 'Domain settings',
       settingsUpdateAvailable: 'Domain settings, script update available',
       settingsTitle: 'This GitLab site is enabled',
@@ -560,6 +567,21 @@
     return `${project.webUrl.replace(/\/$/, '')}/-/pipelines`;
   }
 
+  async function copyTextToClipboard(text, clipboard) {
+    if (typeof text !== 'string'
+      || text.length === 0
+      || !clipboard
+      || typeof clipboard.writeText !== 'function') {
+      return false;
+    }
+    try {
+      await clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function readCache(storage, allowedOrigin) {
     try {
       const raw = storage.getItem(CACHE_STORAGE_KEY);
@@ -614,6 +636,7 @@
       buildProjectSearchPath,
       buildSearchProjectGroups,
       compareUserscriptVersions,
+      copyTextToClipboard,
       disableOrigin,
       enableOrigin,
       extractPublishedUserscriptVersion,
@@ -956,6 +979,10 @@
         ['circle', { cx: '12', cy: '12', r: '9' }],
         ['polygon', { points: '10 8 16 12 10 16' }],
       ],
+      copy: [
+        ['rect', { x: '9', y: '9', width: '13', height: '13', rx: '2' }],
+        ['path', { d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' }],
+      ],
       settings: [
         ['path', { d: 'M4 7h8' }],
         ['circle', { cx: '15', cy: '7', r: '2' }],
@@ -1024,11 +1051,34 @@
     menu.id = menuId;
     menu.hidden = true;
     menu.setAttribute('role', 'menu');
+    const copyUrlButton = createElement('button', 'qgqr-menu-action');
+    copyUrlButton.type = 'button';
+    copyUrlButton.setAttribute('role', 'menuitem');
+    const copyUrlLabel = createElement('span', '', t('copyRepositoryUrl'));
+    copyUrlLabel.setAttribute('aria-live', 'polite');
+    copyUrlButton.append(createIcon('copy'), copyUrlLabel);
     menu.append(
       createProjectMenuAction(buildNewMergeRequestUrl(project), 'merge', 'createMergeRequest'),
       createProjectMenuAction(buildPipelinesUrl(project), 'pipeline', 'viewPipelines'),
+      copyUrlButton,
     );
     entry.append(row, menu);
+
+    let copyFeedbackTimer = null;
+    copyUrlButton.addEventListener('click', async () => {
+      copyUrlButton.disabled = true;
+      const copied = await copyTextToClipboard(project.webUrl, navigator.clipboard);
+      copyUrlLabel.textContent = t(copied ? 'repositoryUrlCopied' : 'copyRepositoryUrlFailed');
+      copyUrlButton.classList.toggle('qgqr-menu-action-success', copied);
+      copyUrlButton.classList.toggle('qgqr-menu-action-error', !copied);
+      copyUrlButton.disabled = false;
+      window.clearTimeout(copyFeedbackTimer);
+      copyFeedbackTimer = window.setTimeout(() => {
+        if (!copyUrlButton.isConnected) return;
+        copyUrlLabel.textContent = t('copyRepositoryUrl');
+        copyUrlButton.classList.remove('qgqr-menu-action-success', 'qgqr-menu-action-error');
+      }, COPY_FEEDBACK_DURATION_MS);
+    });
 
     moreButton.addEventListener('click', () => {
       const shouldOpen = menu.hidden;
@@ -1298,10 +1348,15 @@
       .qgqr-more-button .qgqr-icon { width: 16px; height: 16px; }
       .qgqr-project-menu { margin: 5px 0 3px; border: 1px solid var(--gl-border-color-default, #dfe1e6); border-radius: 9px; padding: 4px; background: var(--gl-background-color-default, #fff); box-shadow: 0 4px 12px rgba(24,32,51,.08); }
       .qgqr-project-menu[hidden] { display: none; }
-      .qgqr-menu-action { display: flex; min-height: 32px; align-items: center; gap: 8px; border-radius: 6px; padding: 6px 9px; color: var(--gl-text-color-default, #172033); font-size: 12px; font-weight: 600; text-decoration: none; transition: color .18s ease, background-color .18s ease; }
+      .qgqr-menu-action { display: flex; width: 100%; min-height: 32px; align-items: center; gap: 8px; border: 0; border-radius: 6px; padding: 6px 9px; background: transparent; color: var(--gl-text-color-default, #172033); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; text-align: left; text-decoration: none; transition: color .18s ease, background-color .18s ease; }
       .qgqr-menu-action + .qgqr-menu-action { margin-top: 2px; }
       .qgqr-menu-action:hover { background: var(--gl-background-color-subtle, #f4f2ff); color: #5943b6; }
       .qgqr-menu-action .qgqr-icon { width: 16px; height: 16px; color: #6d5bd0; }
+      .qgqr-menu-action:disabled { cursor: wait; opacity: .7; }
+      .qgqr-menu-action-success { color: #15803d; }
+      .qgqr-menu-action-error { color: #b91c1c; }
+      .qgqr-menu-action-success .qgqr-icon { color: #15803d; }
+      .qgqr-menu-action-error .qgqr-icon { color: #b91c1c; }
       .qgqr-type { flex: 0 0 65px; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; font-size: 10px; font-weight: 750; letter-spacing: .025em; text-align: center; text-transform: uppercase; }
       .qgqr-type-fork { border-color: #ddd6fe; background: #f3f0ff; color: #5b46ba; }
       .qgqr-type-upstream { border-color: #bfdbfe; background: #eff6ff; color: #175fAD; }

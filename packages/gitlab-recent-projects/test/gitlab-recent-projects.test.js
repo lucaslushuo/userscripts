@@ -10,6 +10,7 @@ const {
   buildProjectSearchPath,
   buildSearchProjectGroups,
   compareUserscriptVersions,
+  copyTextToClipboard,
   disableOrigin,
   enableOrigin,
   extractPublishedUserscriptVersion,
@@ -301,6 +302,24 @@ test('pipelines URL stays within the selected repository', () => {
   assert.equal(buildPipelinesUrl(upstream), `${ORIGIN}/team/app/-/pipelines`);
 });
 
+test('copies the selected repository URL and reports clipboard failures', async () => {
+  let copiedText = null;
+  const clipboard = {
+    async writeText(text) {
+      copiedText = text;
+    },
+  };
+
+  assert.equal(await copyTextToClipboard(`${ORIGIN}/lucas/app`, clipboard), true);
+  assert.equal(copiedText, `${ORIGIN}/lucas/app`);
+  assert.equal(await copyTextToClipboard(`${ORIGIN}/lucas/app`, {
+    async writeText() {
+      throw new Error('permission denied');
+    },
+  }), false);
+  assert.equal(await copyTextToClipboard(`${ORIGIN}/lucas/app`, null), false);
+});
+
 test('saved language overrides the browser language', () => {
   assert.equal(resolvePreferredLanguage('en', ['zh-CN']), 'en');
   assert.equal(resolvePreferredLanguage('zh-CN', ['en-US']), 'zh-CN');
@@ -315,4 +334,6 @@ test('browser primary language selects Chinese or English by default', () => {
 test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'minSearchCharacters', { count: 2 }), '请至少输入 2 个字符');
   assert.equal(translate('en', 'apiRequestFailed', { status: 401 }), 'GitLab API request failed (HTTP 401)');
+  assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
+  assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
 });
