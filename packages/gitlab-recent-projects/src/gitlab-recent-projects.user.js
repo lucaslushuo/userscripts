@@ -32,6 +32,7 @@
   const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
   const UPDATE_REQUEST_TIMEOUT_MS = 10 * 1000;
   const PUBLISHED_SCRIPT_URL = 'https://lucaslushuo.github.io/userscripts/gitlab-recent-projects.user.js';
+  const REPOSITORY_URL = 'https://github.com/lucaslushuo/userscripts';
   const CACHE_STORAGE_KEY = 'gitlab-recent-mr-repos:cache:v3';
   const LANGUAGE_STORAGE_KEY = 'gitlab-recent-mr-repos:language:v1';
   const ENABLED_ORIGIN_STORAGE_KEY = 'gitlab-recent-mr-repos:enabled-origin:v1';
@@ -63,7 +64,9 @@
       clearSearch: '清空搜索',
       ownedFilter: '仅我的仓库及 Upstream',
       ownedHint: '包含个人私有仓库',
-      switchLanguage: '切换为英文',
+      languageSetting: '界面语言',
+      chineseLanguage: '中文',
+      englishLanguage: 'English',
       loadingRecent: '正在读取我最近创建的 MR…',
       searchingGitLab: '正在搜索整个 GitLab…',
       preparingSearch: '准备搜索…',
@@ -110,8 +113,10 @@
       updateCheckFailed: '更新检查失败，可稍后重试。',
       checkForUpdates: '检查更新',
       installUpdate: '安装更新',
-      reloadAfterUpdate: '安装后重新加载',
-      updateInstallHint: 'Tampermonkey 会在新标签页中要求确认更新。安装完成后返回这里重新加载。',
+      reloadAfterUpdate: '重新加载',
+      updateInstalled: 'v{version} 已更新，重新加载后生效。',
+      updateInstallHint: 'Tampermonkey 会在新标签页中要求确认更新。',
+      repositoryLink: '在 GitHub 上查看源码',
     },
     [LANGUAGE_EN]: {
       toggleLabel: 'Recent MR repos',
@@ -128,7 +133,9 @@
       clearSearch: 'Clear search',
       ownedFilter: 'My repositories & Upstream only',
       ownedHint: 'Includes personal private repositories',
-      switchLanguage: 'Switch to Chinese',
+      languageSetting: 'Interface language',
+      chineseLanguage: '中文',
+      englishLanguage: 'English',
       loadingRecent: 'Loading my recently created MRs…',
       searchingGitLab: 'Searching across GitLab…',
       preparingSearch: 'Preparing search…',
@@ -175,8 +182,10 @@
       updateCheckFailed: 'The update check failed. Try again later.',
       checkForUpdates: 'Check for updates',
       installUpdate: 'Install update',
-      reloadAfterUpdate: 'Reload after installing',
-      updateInstallHint: 'Tampermonkey will ask you to confirm the update in a new tab. Return here and reload after installation.',
+      reloadAfterUpdate: 'Reload',
+      updateInstalled: 'Updated to v{version}. Reload to apply it.',
+      updateInstallHint: 'Tampermonkey will ask you to confirm the update in a new tab.',
+      repositoryLink: 'View source on GitHub',
     },
   };
 
@@ -243,6 +252,17 @@
     if (typeof sourceCode !== 'string') return null;
     const match = /^\/\/\s*@version\s+([^\s]+)\s*$/m.exec(sourceCode);
     return match && parseUserscriptVersion(match[1]) ? match[1] : null;
+  }
+
+  function getUpdateActionState(updateStatus, updateAwaitingReload) {
+    if (updateAwaitingReload) {
+      return { showCheck: false, showInstall: false, showReload: true };
+    }
+    return {
+      showCheck: true,
+      showInstall: updateStatus === 'available',
+      showReload: false,
+    };
   }
 
   function isGitLabPage(documentObject) {
@@ -640,6 +660,7 @@
       disableOrigin,
       enableOrigin,
       extractPublishedUserscriptVersion,
+      getUpdateActionState,
       getOriginConfigurationError,
       inferTargetProject,
       isGitLabPage,
@@ -680,7 +701,7 @@
   let searchRequestController = null;
   const installedUserscriptVersion = getInstalledUserscriptVersion();
   let updateState = { status: 'idle', latestVersion: null };
-  let updateInstallOpened = false;
+  let updateAwaitingReload = false;
 
   function t(key, parameters) {
     return translate(currentLanguage, key, parameters);
@@ -706,6 +727,9 @@
   }
 
   function updateStatusText() {
+    if (updateAwaitingReload) {
+      return t('updateInstalled', { version: updateState.latestVersion });
+    }
     if (updateState.status === 'checking') return t('updateChecking');
     if (updateState.status === 'available') {
       return t('updateAvailable', { version: updateState.latestVersion });
@@ -749,8 +773,9 @@
     renderWidget();
   }
 
-  function switchLanguage() {
-    currentLanguage = currentLanguage === LANGUAGE_ZH_CN ? LANGUAGE_EN : LANGUAGE_ZH_CN;
+  function setLanguage(language) {
+    if (!SUPPORTED_LANGUAGES.has(language) || language === currentLanguage) return;
+    currentLanguage = language;
     try {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, currentLanguage);
     } catch {
@@ -991,6 +1016,10 @@
         ['circle', { cx: '9', cy: '17', r: '2' }],
         ['path', { d: 'M12 17h8' }],
       ],
+      github: [
+        ['path', { d: 'M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.1 0S17.9-.4 15 1.5a13.4 13.4 0 0 0-7 0C5.1-.4 3.9 0 3.9 0a5.4 5.4 0 0 0-.2 3A5.8 5.8 0 0 0 2.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 8 18v4' }],
+        ['path', { d: 'M8 19c-3 .9-3-1.5-4-2' }],
+      ],
     };
 
     for (const [tagName, attributes] of definitions[name] || []) {
@@ -1191,32 +1220,39 @@
     clearSearchButton.setAttribute('aria-label', t('clearSearch'));
     widget.querySelector('.qgqr-owned-filter-label').textContent = t('ownedFilter');
     widget.querySelector('.qgqr-filter-hint').textContent = t('ownedHint');
-    const languageButton = widget.querySelector('.qgqr-language');
-    languageButton.textContent = currentLanguage === LANGUAGE_ZH_CN ? 'EN' : '中';
-    languageButton.title = t('switchLanguage');
-    languageButton.setAttribute('aria-label', t('switchLanguage'));
+    const languageSelect = widget.querySelector('.qgqr-language-select');
+    languageSelect.value = currentLanguage;
+    widget.querySelector('.qgqr-language-label').textContent = t('languageSetting');
+    widget.querySelector('.qgqr-language-zh').textContent = t('chineseLanguage');
+    widget.querySelector('.qgqr-language-en').textContent = t('englishLanguage');
     const settingsButton = widget.querySelector('.qgqr-settings-button');
-    const settingsLabel = t(updateState.status === 'available' ? 'settingsUpdateAvailable' : 'settings');
+    const hasActionableUpdate = updateState.status === 'available' && !updateAwaitingReload;
+    const settingsLabel = t(hasActionableUpdate ? 'settingsUpdateAvailable' : 'settings');
     settingsButton.title = settingsLabel;
     settingsButton.setAttribute('aria-label', settingsLabel);
-    settingsButton.classList.toggle('qgqr-has-update', updateState.status === 'available');
+    settingsButton.classList.toggle('qgqr-has-update', hasActionableUpdate);
     widget.querySelector('.qgqr-settings-title').textContent = t('settingsTitle');
     widget.querySelector('.qgqr-settings-description').textContent = t('settingsDescription');
     widget.querySelector('.qgqr-disable-origin').textContent = t('disableCurrentOrigin');
     widget.querySelector('.qgqr-update-title').textContent = t('updateTitle');
     widget.querySelector('.qgqr-update-status').textContent = updateStatusText();
+    const updateActions = getUpdateActionState(updateState.status, updateAwaitingReload);
     const updateCheckButton = widget.querySelector('.qgqr-update-check');
     updateCheckButton.textContent = t('checkForUpdates');
     updateCheckButton.disabled = updateState.status === 'checking';
+    updateCheckButton.hidden = !updateActions.showCheck;
     const installUpdateLink = widget.querySelector('.qgqr-install-update');
     installUpdateLink.textContent = t('installUpdate');
-    installUpdateLink.hidden = updateState.status !== 'available';
+    installUpdateLink.hidden = !updateActions.showInstall;
     const reloadAfterUpdateButton = widget.querySelector('.qgqr-reload-after-update');
     reloadAfterUpdateButton.textContent = t('reloadAfterUpdate');
-    reloadAfterUpdateButton.hidden = !updateInstallOpened;
+    reloadAfterUpdateButton.hidden = !updateActions.showReload;
     const updateInstallHint = widget.querySelector('.qgqr-update-hint');
     updateInstallHint.textContent = t('updateInstallHint');
-    updateInstallHint.hidden = updateState.status !== 'available';
+    updateInstallHint.hidden = !updateActions.showInstall;
+    const repositoryLink = widget.querySelector('.qgqr-repository-link');
+    repositoryLink.title = t('repositoryLink');
+    repositoryLink.setAttribute('aria-label', t('repositoryLink'));
     if (!widget.querySelector('.qgqr-settings').hidden) {
       widget.querySelector('.qgqr-search-area').hidden = true;
       widget.querySelector('.qgqr-list').hidden = true;
@@ -1283,7 +1319,6 @@
       .qgqr-action:hover { border-color: var(--gl-border-color-default, #dfe1e6); background: var(--gl-background-color-subtle, #f4f5f7); color: #5943b6; }
       .qgqr-settings-button { position: relative; }
       .qgqr-settings-button.qgqr-has-update::after { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border: 2px solid var(--gl-background-color-default, #fff); border-radius: 50%; background: #ef4444; box-shadow: 0 0 0 1px rgba(185,28,28,.12); content: ''; }
-      .qgqr-language { width: auto; min-width: 34px; padding: 0 7px; font-size: 11px; font-weight: 750; letter-spacing: .02em; }
       .qgqr-action[hidden] { display: none; }
       .qgqr-action:disabled { opacity: .55; cursor: wait; }
       .qgqr-is-spinning .qgqr-icon { animation: qgqr-spin .8s linear infinite; }
@@ -1292,6 +1327,9 @@
       .qgqr-settings[hidden] { display: none; }
       .qgqr-settings-title { display: block; margin-bottom: 5px; font-size: 13px; }
       .qgqr-settings-description { margin: 0; color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
+      .qgqr-language-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 15px; }
+      .qgqr-language-label { color: var(--gl-text-color-default, #172033); font-size: 12px; font-weight: 650; }
+      .qgqr-language-select { min-width: 112px; border: 1px solid var(--gl-border-color-default, #d8dbe2); border-radius: 8px; padding: 6px 28px 6px 9px; background: var(--gl-background-color-default, #fff); color: var(--gl-text-color-default, #172033); cursor: pointer; font: inherit; font-size: 12px; }
       .qgqr-disable-origin { margin-top: 15px; border: 1px solid #dc2626; border-radius: 8px; padding: 7px 11px; background: transparent; color: #b91c1c; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; }
       .qgqr-disable-origin:hover { background: #fef2f2; }
       .qgqr-update { margin-top: 18px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); padding-top: 16px; }
@@ -1306,6 +1344,9 @@
       .qgqr-install-update { border-color: #6d5bd0; background: #6d5bd0; color: #fff; }
       .qgqr-install-update:hover { background: #5943b6; color: #fff; }
       .qgqr-update-action[hidden] { display: none; }
+      .qgqr-settings-footer { display: flex; justify-content: center; margin-top: 18px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); padding-top: 14px; }
+      .qgqr-repository-link { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; color: var(--gl-text-color-subtle, #626b7d); text-decoration: none; }
+      .qgqr-repository-link:hover { background: var(--gl-background-color-subtle, #f4f5f7); color: var(--gl-text-color-default, #172033); }
       .qgqr-setup-card { width: min(370px, calc(100vw - 24px)); border: 1px solid rgba(99,102,241,.28); border-radius: 16px; padding: 18px; background: var(--gl-background-color-default, #fff); box-shadow: 0 18px 48px rgba(24,32,51,.2); }
       .qgqr-setup-heading { display: flex; align-items: center; gap: 10px; }
       .qgqr-setup-heading .qgqr-icon { color: #6d5bd0; }
@@ -1364,7 +1405,7 @@
       .qgqr-detail, .qgqr-status { color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
       .qgqr-mr-link { color: var(--gl-text-color-link, #1f75cb); text-decoration: none; }
       .qgqr-status { display: block; padding: 11px 16px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); background: var(--gl-background-color-subtle, #fafbfc); }
-      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-update-action:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
+      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
       @keyframes qgqr-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-spin { to { transform: rotate(360deg); } }
       @media (prefers-color-scheme: dark) {
@@ -1458,14 +1499,6 @@
       createElement('span', 'qgqr-subtitle', t('recentSubtitle')),
     );
     header.append(headerIcon, heading);
-    const languageButton = createElement(
-      'button',
-      'qgqr-action qgqr-language',
-      currentLanguage === LANGUAGE_ZH_CN ? 'EN' : '中',
-    );
-    languageButton.type = 'button';
-    languageButton.title = t('switchLanguage');
-    languageButton.setAttribute('aria-label', t('switchLanguage'));
     const refreshButton = createElement('button', 'qgqr-action qgqr-refresh');
     refreshButton.type = 'button';
     refreshButton.title = t('refreshRecent');
@@ -1477,13 +1510,34 @@
     settingsButton.setAttribute('aria-label', t('settings'));
     settingsButton.setAttribute('aria-expanded', 'false');
     settingsButton.append(createIcon('settings'));
-    header.append(settingsButton, languageButton, refreshButton);
+    header.append(settingsButton, refreshButton);
     const settings = createElement('section', 'qgqr-settings');
     settings.hidden = true;
     settings.append(
       createElement('strong', 'qgqr-settings-title', t('settingsTitle')),
       createElement('p', 'qgqr-settings-description', t('settingsDescription')),
     );
+    const languageSetting = createElement('label', 'qgqr-language-setting');
+    const languageSelect = createElement('select', 'qgqr-language-select');
+    const chineseLanguageOption = createElement(
+      'option',
+      'qgqr-language-zh',
+      t('chineseLanguage'),
+    );
+    chineseLanguageOption.value = LANGUAGE_ZH_CN;
+    const englishLanguageOption = createElement(
+      'option',
+      'qgqr-language-en',
+      t('englishLanguage'),
+    );
+    englishLanguageOption.value = LANGUAGE_EN;
+    languageSelect.append(chineseLanguageOption, englishLanguageOption);
+    languageSelect.value = currentLanguage;
+    languageSetting.append(
+      createElement('span', 'qgqr-language-label', t('languageSetting')),
+      languageSelect,
+    );
+    settings.append(languageSetting);
     const disableButton = createElement('button', 'qgqr-disable-origin', t('disableCurrentOrigin'));
     disableButton.type = 'button';
     const update = createElement('section', 'qgqr-update');
@@ -1519,7 +1573,16 @@
       updateActions,
       updateInstallHint,
     );
-    settings.append(disableButton, update);
+    const settingsFooter = createElement('footer', 'qgqr-settings-footer');
+    const repositoryLink = createElement('a', 'qgqr-repository-link');
+    repositoryLink.href = REPOSITORY_URL;
+    repositoryLink.target = '_blank';
+    repositoryLink.rel = 'noopener noreferrer';
+    repositoryLink.title = t('repositoryLink');
+    repositoryLink.setAttribute('aria-label', t('repositoryLink'));
+    repositoryLink.append(createIcon('github'));
+    settingsFooter.append(repositoryLink);
+    settings.append(disableButton, update, settingsFooter);
     const searchArea = createElement('div', 'qgqr-search-area');
     const searchBox = createElement('div', 'qgqr-search-box');
     searchBox.append(createIcon('search', 'qgqr-search-icon'));
@@ -1562,11 +1625,11 @@
       toggle.setAttribute('aria-expanded', String(!panel.hidden));
       if (panel.hidden) closeProjectMenus(widget);
     });
-    languageButton.addEventListener('click', switchLanguage);
+    languageSelect.addEventListener('change', () => setLanguage(languageSelect.value));
     refreshButton.addEventListener('click', () => refreshData({ force: true }));
     updateCheckButton.addEventListener('click', () => checkForUserscriptUpdates({ force: true }));
     installUpdateLink.addEventListener('click', () => {
-      updateInstallOpened = true;
+      updateAwaitingReload = true;
       renderWidget();
     });
     reloadAfterUpdateButton.addEventListener('click', () => window.location.reload());

@@ -15,6 +15,7 @@ const {
   enableOrigin,
   extractPublishedUserscriptVersion,
   getOriginConfigurationError,
+  getUpdateActionState,
   isGitLabPage,
   isOriginEnabled,
   normalizeHttpsOrigin,
@@ -336,4 +337,26 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('en', 'apiRequestFailed', { status: 401 }), 'GitLab API request failed (HTTP 401)');
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
+  assert.equal(
+    translate('zh-CN', 'updateInstalled', { version: '3.5.0' }),
+    'v3.5.0 已更新，重新加载后生效。',
+  );
+});
+
+test('update flow exposes only the next relevant action', () => {
+  assert.deepEqual(getUpdateActionState('available', false), {
+    showCheck: true,
+    showInstall: true,
+    showReload: false,
+  });
+  assert.deepEqual(getUpdateActionState('available', true), {
+    showCheck: false,
+    showInstall: false,
+    showReload: true,
+  });
+  assert.deepEqual(getUpdateActionState('current', false), {
+    showCheck: true,
+    showInstall: false,
+    showReload: false,
+  });
 });
