@@ -87,6 +87,7 @@
       recentMergeRequestCount: ' · 共 {count} 个近期 MR',
       showMoreActions: '{project} 更多操作',
       createMergeRequest: '选择分支并创建 MR',
+      myMergeRequests: '我的 MR',
       viewPipelines: '查看 Pipelines',
       copyRepositoryUrl: '复制仓库地址',
       repositoryUrlCopied: '已复制仓库地址',
@@ -156,6 +157,7 @@
       recentMergeRequestCount: ' · {count} recent MRs',
       showMoreActions: 'More actions for {project}',
       createMergeRequest: 'Choose branches & create MR',
+      myMergeRequests: 'My merge requests',
       viewPipelines: 'View pipelines',
       copyRepositoryUrl: 'Copy repository URL',
       repositoryUrlCopied: 'Repository URL copied',
@@ -583,6 +585,12 @@
     return url.href;
   }
 
+  function buildMyMergeRequestsUrl(project) {
+    const url = new URL(`${project.webUrl.replace(/\/$/, '')}/-/merge_requests`);
+    url.searchParams.set('scope', 'created_by_me');
+    return url.href;
+  }
+
   function buildPipelinesUrl(project) {
     return `${project.webUrl.replace(/\/$/, '')}/-/pipelines`;
   }
@@ -651,6 +659,7 @@
     module.exports = {
       buildRecentMrGroups,
       buildGlobalSearchFallbackPath,
+      buildMyMergeRequestsUrl,
       buildNewMergeRequestUrl,
       buildPipelinesUrl,
       buildProjectSearchPath,
@@ -1088,6 +1097,7 @@
     copyUrlButton.append(createIcon('copy'), copyUrlLabel);
     menu.append(
       createProjectMenuAction(buildNewMergeRequestUrl(project), 'merge', 'createMergeRequest'),
+      createProjectMenuAction(buildMyMergeRequestsUrl(project), 'merge', 'myMergeRequests'),
       createProjectMenuAction(buildPipelinesUrl(project), 'pipeline', 'viewPipelines'),
       copyUrlButton,
     );

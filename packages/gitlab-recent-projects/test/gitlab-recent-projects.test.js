@@ -5,6 +5,7 @@ const test = require('node:test');
 const {
   buildRecentMrGroups,
   buildGlobalSearchFallbackPath,
+  buildMyMergeRequestsUrl,
   buildNewMergeRequestUrl,
   buildPipelinesUrl,
   buildProjectSearchPath,
@@ -295,6 +296,20 @@ test('new merge request URL stays within the selected repository', () => {
   );
 });
 
+test('my merge requests URL filters the selected repository by the current user', () => {
+  const fork = project(2, 'lucas/app');
+  const upstream = project(1, 'team/app');
+
+  assert.equal(
+    buildMyMergeRequestsUrl(fork),
+    `${ORIGIN}/lucas/app/-/merge_requests?scope=created_by_me`,
+  );
+  assert.equal(
+    buildMyMergeRequestsUrl(upstream),
+    `${ORIGIN}/team/app/-/merge_requests?scope=created_by_me`,
+  );
+});
+
 test('pipelines URL stays within the selected repository', () => {
   const fork = project(2, 'lucas/app');
   const upstream = project(1, 'team/app');
@@ -338,8 +353,8 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
   assert.equal(
-    translate('zh-CN', 'updateInstalled', { version: '3.5.0' }),
-    'v3.5.0 已更新，重新加载后生效。',
+    translate('zh-CN', 'updateInstalled', { version: '3.6.0' }),
+    'v3.6.0 已更新，重新加载后生效。',
   );
 });
 
