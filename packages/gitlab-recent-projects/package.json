@@ -1,7 +1,7 @@
 {
   "name": "@userscripts/gitlab-recent-projects",
   "private": true,
-  "version": "3.6.0",
+  "version": "3.6.1",
   "description": "Quick access to recent GitLab MR repositories and global project search.",
   "scripts": {
     "check": "node --check src/gitlab-recent-projects.user.js",
