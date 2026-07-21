@@ -37,6 +37,7 @@
   const LANGUAGE_STORAGE_KEY = 'gitlab-recent-mr-repos:language:v1';
   const ENABLED_ORIGIN_STORAGE_KEY = 'gitlab-recent-mr-repos:enabled-origin:v1';
   const UPDATE_CACHE_STORAGE_KEY = 'gitlab-recent-mr-repos:update:v1';
+  const FAVORITES_STORAGE_KEY = 'gitlab-recent-mr-repos:favorites:v1';
   const WIDGET_ID = 'gitlab-recent-mr-repos';
   const STYLE_ID = `${WIDGET_ID}-style`;
   const LANGUAGE_ZH_CN = 'zh-CN';
@@ -56,6 +57,10 @@
       recentSubtitle: '按 MR 创建时间排列 · 最多 20 组',
       globalSearchSubtitle: '搜索整个 GitLab · 同组展示 Fork / Upstream',
       ownedSearchSubtitle: '仅我的仓库 · 同组展示对应 Upstream',
+      favoritesTitle: '收藏夹',
+      favoritesSubtitle: '已收藏 {count} 个仓库',
+      openFavorites: '打开收藏夹',
+      showRecentProjects: '返回最近 MR 仓库',
       refreshRecent: '刷新最近 MR',
       refreshing: '正在刷新',
       searchPlaceholder: '搜索整个 GitLab 的仓库',
@@ -73,6 +78,7 @@
       minSearchCharacters: '请至少输入 {count} 个字符',
       noRecentMergeRequests: '没有找到你创建的 MR',
       noSearchResults: '没有找到“{query}”相关的可访问仓库',
+      noFavorites: '还没有收藏仓库，点击项目右侧的星标即可添加。',
       apiRequestFailed: 'GitLab API 请求失败（HTTP {status}）',
       apiParseFailed: 'GitLab API 返回了无法解析的数据',
       apiShapeInvalid: 'GitLab API 返回了无法识别的数据',
@@ -88,6 +94,9 @@
       showMoreActions: '{project} 更多操作',
       createMergeRequest: '选择分支并创建 MR',
       myMergeRequests: '我的 MR',
+      addFavorite: '收藏仓库：{project}',
+      removeFavorite: '取消收藏：{project}',
+      favoriteStorageFailed: '无法保存收藏，请检查浏览器是否允许本站使用本地存储。',
       viewPipelines: '查看 Pipelines',
       copyRepositoryUrl: '复制仓库地址',
       repositoryUrlCopied: '已复制仓库地址',
@@ -126,6 +135,10 @@
       recentSubtitle: 'Sorted by MR creation time · Up to 20 groups',
       globalSearchSubtitle: 'Search all GitLab · Fork / Upstream grouped together',
       ownedSearchSubtitle: 'My repositories only · Include their Upstream',
+      favoritesTitle: 'Favorites',
+      favoritesSubtitle: '{count} saved repositories',
+      openFavorites: 'Open favorites',
+      showRecentProjects: 'Back to recent MR repositories',
       refreshRecent: 'Refresh recent MRs',
       refreshing: 'Refreshing',
       searchPlaceholder: 'Search repositories across GitLab',
@@ -143,6 +156,7 @@
       minSearchCharacters: 'Enter at least {count} characters',
       noRecentMergeRequests: 'No merge requests created by you were found',
       noSearchResults: 'No accessible repositories found for “{query}”',
+      noFavorites: 'No saved repositories yet. Select the star beside a repository to add one.',
       apiRequestFailed: 'GitLab API request failed (HTTP {status})',
       apiParseFailed: 'GitLab API returned data that could not be parsed',
       apiShapeInvalid: 'GitLab API returned an unrecognized response',
@@ -158,6 +172,9 @@
       showMoreActions: 'More actions for {project}',
       createMergeRequest: 'Choose branches & create MR',
       myMergeRequests: 'My merge requests',
+      addFavorite: 'Add {project} to favorites',
+      removeFavorite: 'Remove {project} from favorites',
+      favoriteStorageFailed: 'Could not save favorites. Check whether local storage is allowed for this site.',
       viewPipelines: 'View pipelines',
       copyRepositoryUrl: 'Copy repository URL',
       repositoryUrlCopied: 'Repository URL copied',
@@ -644,6 +661,45 @@
     };
   }
 
+  function readFavoriteProjects(storage, allowedOrigin) {
+    try {
+      const raw = storage.getItem(FAVORITES_STORAGE_KEY);
+      if (raw === null) return [];
+      const value = JSON.parse(raw);
+      if (!Array.isArray(value)) return [];
+
+      const favoriteProjectsById = new Map();
+      for (const item of value) {
+        const project = normalizeProject(item, allowedOrigin);
+        if (project && !favoriteProjectsById.has(project.id)) {
+          favoriteProjectsById.set(project.id, project);
+        }
+      }
+      return [...favoriteProjectsById.values()];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveFavoriteProjects(storage, favoriteProjects) {
+    try {
+      storage.setItem(
+        FAVORITES_STORAGE_KEY,
+        JSON.stringify(favoriteProjects.map(serializeProject)),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function toggleFavoriteProject(favoriteProjects, project) {
+    if (favoriteProjects.some(({ id }) => id === project.id)) {
+      return favoriteProjects.filter(({ id }) => id !== project.id);
+    }
+    return [project, ...favoriteProjects];
+  }
+
   function serializeMergeRequest(mergeRequest) {
     return {
       id: mergeRequest.id,
@@ -677,7 +733,10 @@
       normalizeHttpsOrigin,
       normalizeMergeRequest,
       normalizeProject,
+      readFavoriteProjects,
       resolvePreferredLanguage,
+      saveFavoriteProjects,
+      toggleFavoriteProject,
       translate,
     };
     return;
@@ -708,6 +767,8 @@
   let onlyOwnedSearch = DEFAULT_OWNED_ONLY_SEARCH;
   let searchDebounceTimer = null;
   let searchRequestController = null;
+  let favoriteProjects = readFavoriteProjects(window.localStorage, window.location.origin);
+  let isFavoritesView = false;
   const installedUserscriptVersion = getInstalledUserscriptVersion();
   let updateState = { status: 'idle', latestVersion: null };
   let updateAwaitingReload = false;
@@ -724,6 +785,20 @@
     return error instanceof LocalizedError
       ? createStatus(error.translationKey, error.translationParameters)
       : createStatus(fallbackKey);
+  }
+
+  function isFavoriteProject(project) {
+    return favoriteProjects.some(({ id }) => id === project.id);
+  }
+
+  function updateFavoriteProject(project) {
+    const nextFavoriteProjects = toggleFavoriteProject(favoriteProjects, project);
+    if (!saveFavoriteProjects(window.localStorage, nextFavoriteProjects)) {
+      window.alert(t('favoriteStorageFailed'));
+      return;
+    }
+    favoriteProjects = nextFavoriteProjects;
+    renderWidget();
   }
 
   function applyPublishedVersion(latestVersion) {
@@ -1017,6 +1092,9 @@
         ['rect', { x: '9', y: '9', width: '13', height: '13', rx: '2' }],
         ['path', { d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' }],
       ],
+      star: [
+        ['path', { d: 'm12 2 3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2z' }],
+      ],
       settings: [
         ['path', { d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.08a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.92 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.92a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z' }],
         ['circle', { cx: '12', cy: '12', r: '3' }],
@@ -1070,6 +1148,19 @@
     const row = createElement('div', 'qgqr-project-row');
     row.append(createProjectLink(project, type));
 
+    const projectIsFavorite = isFavoriteProject(project);
+    const favoriteLabel = t(projectIsFavorite ? 'removeFavorite' : 'addFavorite', {
+      project: project.nameWithNamespace,
+    });
+    const favoriteButton = createElement('button', 'qgqr-favorite-button');
+    favoriteButton.type = 'button';
+    favoriteButton.title = favoriteLabel;
+    favoriteButton.setAttribute('aria-label', favoriteLabel);
+    favoriteButton.setAttribute('aria-pressed', String(projectIsFavorite));
+    favoriteButton.classList.toggle('qgqr-is-favorite', projectIsFavorite);
+    favoriteButton.append(createIcon('star'));
+    row.append(favoriteButton);
+
     const menuId = `${WIDGET_ID}-project-menu-${project.id}`;
     const moreButton = createElement('button', 'qgqr-more-button');
     moreButton.type = 'button';
@@ -1098,6 +1189,8 @@
       copyUrlButton,
     );
     entry.append(row, menu);
+
+    favoriteButton.addEventListener('click', () => updateFavoriteProject(project));
 
     let copyFeedbackTimer = null;
     copyUrlButton.addEventListener('click', async () => {
@@ -1179,34 +1272,50 @@
     return item;
   }
 
+  function renderFavoriteProject(project) {
+    const item = createElement('li', 'qgqr-item');
+    const content = createElement('div', 'qgqr-item-content');
+    content.append(createProjectEntry(project, null));
+    item.append(content);
+    return item;
+  }
+
   function renderWidget() {
     const widget = document.getElementById(WIDGET_ID);
     if (!widget) return;
 
-    const isSearchMode = searchQuery.length > 0;
-    const groups = isSearchMode
-      ? buildSearchProjectGroups(searchProjects)
-      : buildRecentMrGroups(projects, mergeRequests);
-    const renderItem = isSearchMode ? renderSearchGroup : renderGroup;
+    const isSearchMode = !isFavoritesView && searchQuery.length > 0;
+    const groups = isFavoritesView
+      ? favoriteProjects
+      : (isSearchMode
+        ? buildSearchProjectGroups(searchProjects)
+        : buildRecentMrGroups(projects, mergeRequests));
+    const renderItem = isFavoritesView
+      ? renderFavoriteProject
+      : (isSearchMode ? renderSearchGroup : renderGroup);
     widget.querySelector('.qgqr-list').replaceChildren(...groups.map(renderItem));
     widget.querySelector('.qgqr-count').textContent = String(groups.length);
     const statusElement = widget.querySelector('.qgqr-status');
-    const activeStatus = isSearchMode ? searchStatus : recentStatus;
-    const emptyStatus = t(
-      isSearchMode ? 'noSearchResults' : 'noRecentMergeRequests',
-      { query: searchQuery },
-    );
+    const activeStatus = isFavoritesView ? null : (isSearchMode ? searchStatus : recentStatus);
+    const emptyStatus = isFavoritesView
+      ? t('noFavorites')
+      : t(
+        isSearchMode ? 'noSearchResults' : 'noRecentMergeRequests',
+        { query: searchQuery },
+      );
     statusElement.textContent = groups.length === 0 && !activeStatus
       ? emptyStatus
       : statusText(activeStatus);
     statusElement.hidden = groups.length > 0 && !activeStatus;
-    widget.querySelector('.qgqr-subtitle').textContent = isSearchMode
-      ? (onlyOwnedSearch
-        ? t('ownedSearchSubtitle')
-        : t('globalSearchSubtitle'))
-      : t('recentSubtitle');
+    widget.querySelector('.qgqr-subtitle').textContent = isFavoritesView
+      ? t('favoritesSubtitle', { count: favoriteProjects.length })
+      : (isSearchMode
+        ? (onlyOwnedSearch
+          ? t('ownedSearchSubtitle')
+          : t('globalSearchSubtitle'))
+        : t('recentSubtitle'));
     const refreshButton = widget.querySelector('.qgqr-refresh');
-    refreshButton.hidden = isSearchMode;
+    refreshButton.hidden = isFavoritesView || isSearchMode;
     refreshButton.disabled = isRefreshing;
     refreshButton.classList.toggle('qgqr-is-spinning', isRefreshing);
     refreshButton.title = t('refreshRecent');
@@ -1217,7 +1326,16 @@
     widget.querySelector('.qgqr-toggle-label').textContent = t('toggleLabel');
     const panel = widget.querySelector('.qgqr-panel');
     panel.setAttribute('aria-label', t('panelAriaLabel'));
-    widget.querySelector('.qgqr-title').textContent = t('title');
+    widget.querySelector('.qgqr-header-icon').replaceChildren(
+      createIcon(isFavoritesView ? 'star' : 'merge'),
+    );
+    widget.querySelector('.qgqr-title').textContent = t(isFavoritesView ? 'favoritesTitle' : 'title');
+    const favoritesButton = widget.querySelector('.qgqr-favorites-button');
+    const favoritesButtonLabel = t(isFavoritesView ? 'showRecentProjects' : 'openFavorites');
+    favoritesButton.title = favoritesButtonLabel;
+    favoritesButton.setAttribute('aria-label', favoritesButtonLabel);
+    favoritesButton.setAttribute('aria-pressed', String(isFavoritesView));
+    favoritesButton.classList.toggle('qgqr-active', isFavoritesView);
     const searchInput = widget.querySelector('.qgqr-search-input');
     searchInput.placeholder = t(onlyOwnedSearch ? 'ownedSearchPlaceholder' : 'searchPlaceholder');
     searchInput.setAttribute('aria-label', t('searchAriaLabel'));
@@ -1259,9 +1377,10 @@
     const repositoryLink = widget.querySelector('.qgqr-repository-link');
     repositoryLink.title = t('repositoryLink');
     repositoryLink.setAttribute('aria-label', t('repositoryLink'));
-    if (!widget.querySelector('.qgqr-settings').hidden) {
-      widget.querySelector('.qgqr-search-area').hidden = true;
-      widget.querySelector('.qgqr-list').hidden = true;
+    const settingsOpen = !widget.querySelector('.qgqr-settings').hidden;
+    widget.querySelector('.qgqr-search-area').hidden = settingsOpen || isFavoritesView;
+    widget.querySelector('.qgqr-list').hidden = settingsOpen;
+    if (settingsOpen) {
       statusElement.hidden = true;
     }
   }
@@ -1323,6 +1442,8 @@
       .qgqr-subtitle { display: block; margin-top: 1px; color: var(--gl-text-color-subtle, #626b7d); font-size: 12px; }
       .qgqr-action { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid transparent; border-radius: 9px; padding: 0; background: transparent; color: var(--gl-text-color-subtle, #626b7d); cursor: pointer; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
       .qgqr-action:hover { border-color: var(--gl-border-color-default, #dfe1e6); background: var(--gl-background-color-subtle, #f4f5f7); color: #5943b6; }
+      .qgqr-favorites-button.qgqr-active { border-color: #f4c55d; background: #fffbeb; color: #b45309; }
+      .qgqr-favorites-button.qgqr-active .qgqr-icon * { fill: currentColor !important; }
       .qgqr-settings-button { position: relative; }
       .qgqr-settings-button.qgqr-has-update::after { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border: 2px solid var(--gl-background-color-default, #fff); border-radius: 50%; background: #ef4444; box-shadow: 0 0 0 1px rgba(185,28,28,.12); content: ''; }
       .qgqr-action[hidden] { display: none; }
@@ -1390,9 +1511,12 @@
       .qgqr-project-link { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; border-radius: 5px; color: var(--gl-text-color-link, #1f63b5); text-decoration: none; outline: none; }
       .qgqr-project-link:hover .qgqr-project-name, .qgqr-mr-link:hover { text-decoration: underline; }
       .qgqr-project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .qgqr-more-button { display: grid; width: 27px; height: 25px; flex: 0 0 27px; place-items: center; border: 1px solid transparent; border-radius: 7px; padding: 0; background: transparent; color: var(--gl-text-color-subtle, #626b7d); cursor: pointer; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
+      .qgqr-favorite-button, .qgqr-more-button { display: grid; width: 27px; height: 25px; flex: 0 0 27px; place-items: center; border: 1px solid transparent; border-radius: 7px; padding: 0; background: transparent; color: var(--gl-text-color-subtle, #626b7d); cursor: pointer; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
+      .qgqr-favorite-button:hover { border-color: #f4c55d; background: #fffbeb; color: #b45309; }
+      .qgqr-favorite-button.qgqr-is-favorite { border-color: #f4c55d; color: #b45309; }
+      .qgqr-favorite-button.qgqr-is-favorite .qgqr-icon * { fill: currentColor !important; }
       .qgqr-more-button:hover, .qgqr-more-button[aria-expanded="true"] { border-color: var(--gl-border-color-default, #dfe1e6); background: var(--gl-background-color-strong, #eceef2); color: #5943b6; }
-      .qgqr-more-button .qgqr-icon { width: 16px; height: 16px; }
+      .qgqr-favorite-button .qgqr-icon, .qgqr-more-button .qgqr-icon { width: 16px; height: 16px; }
       .qgqr-project-menu { margin: 5px 0 3px; border: 1px solid var(--gl-border-color-default, #dfe1e6); border-radius: 9px; padding: 4px; background: var(--gl-background-color-default, #fff); box-shadow: 0 4px 12px rgba(24,32,51,.08); }
       .qgqr-project-menu[hidden] { display: none; }
       .qgqr-menu-action { display: flex; width: 100%; min-height: 32px; align-items: center; gap: 8px; border: 0; border-radius: 6px; padding: 6px 9px; background: transparent; color: var(--gl-text-color-default, #172033); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; text-align: left; text-decoration: none; transition: color .18s ease, background-color .18s ease; }
@@ -1411,11 +1535,13 @@
       .qgqr-detail, .qgqr-status { color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
       .qgqr-mr-link { color: var(--gl-text-color-link, #1f75cb); text-decoration: none; }
       .qgqr-status { display: block; padding: 11px 16px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); background: var(--gl-background-color-subtle, #fafbfc); }
-      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
+      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
       @keyframes qgqr-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-spin { to { transform: rotate(360deg); } }
       @media (prefers-color-scheme: dark) {
         .qgqr-count, .qgqr-header-icon { background: rgba(139,92,246,.2); color: #c4b5fd; }
+        .qgqr-favorites-button.qgqr-active { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
+        .qgqr-favorite-button:hover, .qgqr-favorite-button.qgqr-is-favorite { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
         .qgqr-type-fork { border-color: rgba(167,139,250,.4); background: rgba(109,40,217,.16); color: #c4b5fd; }
         .qgqr-type-upstream { border-color: rgba(96,165,250,.38); background: rgba(37,99,235,.14); color: #93c5fd; }
       }
@@ -1510,13 +1636,19 @@
     refreshButton.title = t('refreshRecent');
     refreshButton.setAttribute('aria-label', t('refreshRecent'));
     refreshButton.append(createIcon('refresh'));
+    const favoritesButton = createElement('button', 'qgqr-action qgqr-favorites-button');
+    favoritesButton.type = 'button';
+    favoritesButton.title = t('openFavorites');
+    favoritesButton.setAttribute('aria-label', t('openFavorites'));
+    favoritesButton.setAttribute('aria-pressed', 'false');
+    favoritesButton.append(createIcon('star'));
     const settingsButton = createElement('button', 'qgqr-action qgqr-settings-button');
     settingsButton.type = 'button';
     settingsButton.title = t('settings');
     settingsButton.setAttribute('aria-label', t('settings'));
     settingsButton.setAttribute('aria-expanded', 'false');
     settingsButton.append(createIcon('settings'));
-    header.append(settingsButton, refreshButton);
+    header.append(favoritesButton, settingsButton, refreshButton);
     const settings = createElement('section', 'qgqr-settings');
     settings.hidden = true;
     settings.append(
@@ -1633,6 +1765,12 @@
     });
     languageSelect.addEventListener('change', () => setLanguage(languageSelect.value));
     refreshButton.addEventListener('click', () => refreshData({ force: true }));
+    favoritesButton.addEventListener('click', () => {
+      isFavoritesView = !isFavoritesView;
+      settings.hidden = true;
+      settingsButton.setAttribute('aria-expanded', 'false');
+      renderWidget();
+    });
     updateCheckButton.addEventListener('click', () => checkForUserscriptUpdates({ force: true }));
     installUpdateLink.addEventListener('click', () => {
       updateAwaitingReload = true;
@@ -1642,9 +1780,7 @@
     settingsButton.addEventListener('click', () => {
       settings.hidden = !settings.hidden;
       settingsButton.setAttribute('aria-expanded', String(!settings.hidden));
-      searchArea.hidden = !settings.hidden;
-      widget.querySelector('.qgqr-list').hidden = !settings.hidden;
-      widget.querySelector('.qgqr-status').hidden = !settings.hidden;
+      renderWidget();
     });
     disableButton.addEventListener('click', () => {
       if (!window.confirm(t('disableCurrentOriginConfirm'))) return;
@@ -1665,7 +1801,7 @@
       searchInput.focus();
     });
     document.addEventListener('click', (event) => {
-      if (!widget.contains(event.target)) {
+      if (!event.composedPath().includes(widget)) {
         closeProjectMenus(widget);
         panel.hidden = true;
         toggle.setAttribute('aria-expanded', 'false');

@@ -22,7 +22,10 @@ const {
   normalizeHttpsOrigin,
   normalizeMergeRequest,
   normalizeProject,
+  readFavoriteProjects,
   resolvePreferredLanguage,
+  saveFavoriteProjects,
+  toggleFavoriteProject,
   translate,
 } = require('../src/gitlab-recent-projects.user.js');
 
@@ -107,6 +110,8 @@ test('fails closed when browser storage is unavailable', () => {
   assert.equal(isOriginEnabled(unavailableStorage, ORIGIN), false);
   assert.equal(enableOrigin(unavailableStorage, ORIGIN, ORIGIN), false);
   assert.equal(disableOrigin(unavailableStorage), false);
+  assert.deepEqual(readFavoriteProjects(unavailableStorage, ORIGIN), []);
+  assert.equal(saveFavoriteProjects(unavailableStorage, []), false);
 });
 
 test('requires the configured domain to match the current GitLab origin', () => {
@@ -149,6 +154,50 @@ function project(id, path, upstream = null) {
     upstream,
   };
 }
+
+test('favorites persist normalized same-origin projects and reject unsafe entries', () => {
+  const favorite = project(2, 'lucas/app', project(1, 'team/app'));
+  const storage = memoryStorage();
+
+  assert.equal(saveFavoriteProjects(storage, [favorite]), true);
+  const storedFavorites = readFavoriteProjects(storage, ORIGIN);
+  assert.equal(storedFavorites.length, 1);
+  assert.equal(storedFavorites[0].id, favorite.id);
+  assert.equal(storedFavorites[0].upstream.id, favorite.upstream.id);
+
+  storage.setItem('gitlab-recent-mr-repos:favorites:v1', JSON.stringify([
+    {
+      id: 3,
+      name_with_namespace: 'team/unsafe',
+      path_with_namespace: 'team/unsafe',
+      web_url: 'https://attacker.example/team/unsafe',
+    },
+    {
+      id: 4,
+      name_with_namespace: 'team/safe',
+      path_with_namespace: 'team/safe',
+      web_url: `${ORIGIN}/team/safe`,
+    },
+    {
+      id: 4,
+      name_with_namespace: 'team/safe duplicate',
+      path_with_namespace: 'team/safe-duplicate',
+      web_url: `${ORIGIN}/team/safe-duplicate`,
+    },
+  ]));
+  const filteredFavorites = readFavoriteProjects(storage, ORIGIN);
+  assert.deepEqual(filteredFavorites.map(({ id }) => id), [4]);
+  assert.equal(filteredFavorites[0].webUrl, `${ORIGIN}/team/safe`);
+});
+
+test('favorite toggling adds newest projects first and removes existing projects', () => {
+  const first = project(1, 'team/first');
+  const second = project(2, 'team/second');
+
+  const withSecond = toggleFavoriteProject([first], second);
+  assert.deepEqual(withSecond.map(({ id }) => id), [second.id, first.id]);
+  assert.deepEqual(toggleFavoriteProject(withSecond, first).map(({ id }) => id), [second.id]);
+});
 
 function mergeRequest(id, iid, sourceProjectId, targetProjectId, createdAt, targetPath = 'team/app') {
   return normalizeMergeRequest({
@@ -353,8 +402,13 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
   assert.equal(
-    translate('zh-CN', 'updateInstalled', { version: '3.6.0' }),
-    'v3.6.0 已更新，重新加载后生效。',
+    translate('zh-CN', 'updateInstalled', { version: '3.7.0' }),
+    'v3.7.0 已更新，重新加载后生效。',
+  );
+  assert.equal(translate('zh-CN', 'favoritesTitle'), '收藏夹');
+  assert.equal(
+    translate('en', 'addFavorite', { project: 'team/app' }),
+    'Add team/app to favorites',
   );
 });
 
