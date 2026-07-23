@@ -1715,12 +1715,13 @@
     branchInfo.append(
       createIcon('branch', 'qgqr-branch-row-icon'),
       branchLink,
-      createElement('span', 'qgqr-branch-date', t('branchUpdatedOn', {
-        date: formatDate(branchResult.branch.committedAt),
-      })),
     );
     row.append(branchInfo);
 
+    const branchMetadata = createElement('div', 'qgqr-branch-metadata');
+    branchMetadata.append(createElement('span', 'qgqr-branch-date', t('branchUpdatedOn', {
+      date: formatDate(branchResult.branch.committedAt),
+    })));
     if (branchResult.statuses) {
       const statuses = createElement('div', 'qgqr-branch-badges');
       for (const targetName of BRANCH_TARGET_NAMES) {
@@ -1729,8 +1730,9 @@
           branchResult.statuses[targetName] || 'unknown',
         ));
       }
-      row.append(statuses);
+      branchMetadata.append(statuses);
     }
+    row.append(branchMetadata);
 
     const mergeRequestUrl = buildUpstreamBranchMergeRequestUrl(
       project,
@@ -2070,23 +2072,24 @@
       .qgqr-branch-message { display: block; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); padding: 8px 2px; color: var(--gl-text-color-subtle, #626b7d); font-size: 11px; }
       .qgqr-branch-message-error { color: #b91c1c; }
       .qgqr-branch-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-      .qgqr-branch-row { display: grid; min-height: 38px; grid-template-columns: minmax(0, 1fr) auto 26px; align-items: center; gap: 7px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); padding: 5px 0; }
+      .qgqr-branch-row { display: grid; min-height: 54px; grid-template-columns: minmax(0, 1fr) 26px; align-items: start; column-gap: 7px; row-gap: 4px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); padding: 7px 0; }
       .qgqr-branch-info { display: flex; min-width: 0; align-items: center; gap: 6px; }
       .qgqr-branch-row-icon { width: 14px; height: 14px; flex: 0 0 14px; color: #7c6cf2; }
-      .qgqr-branch-link { overflow: hidden; color: var(--gl-text-color-link, #1f63b5); font: 600 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+      .qgqr-branch-link { min-width: 0; color: var(--gl-text-color-link, #1f63b5); font: 600 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; text-decoration: none; }
       .qgqr-branch-link:hover { text-decoration: underline; }
+      .qgqr-branch-metadata { display: flex; min-width: 0; grid-column: 1 / -1; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding-left: 20px; }
       .qgqr-branch-date { flex: 0 0 auto; color: var(--gl-text-color-subtle, #7a8292); font-size: 10px; }
-      .qgqr-branch-badges { display: flex; flex-wrap: nowrap; gap: 3px; }
-      .qgqr-branch-mr { display: grid; grid-column: 3; width: 26px; height: 26px; place-items: center; border-radius: 7px; color: #1d72c9; text-decoration: none; transition: color .18s ease, background-color .18s ease; }
+      .qgqr-branch-badges { display: flex; margin-left: auto; flex-wrap: nowrap; gap: 10px; }
+      .qgqr-branch-mr { display: grid; width: 26px; height: 26px; grid-column: 2; grid-row: 1; place-items: center; border-radius: 7px; color: #1d72c9; text-decoration: none; transition: color .18s ease, background-color .18s ease; }
       .qgqr-branch-mr:hover { background: var(--gl-background-color-subtle, #eff6ff); color: #1d4ed8; }
       .qgqr-branch-mr .qgqr-icon { width: 16px; height: 16px; }
-      .qgqr-branch-badge { min-width: 42px; border: 1px solid; border-radius: 999px; padding: 2px 7px; font-size: 9.5px; font-weight: 750; line-height: 1.35; text-align: center; text-transform: lowercase; }
-      .qgqr-branch-badge-merged { border-color: #22c55e; background: #dcfce7; color: #166534; }
-      .qgqr-branch-badge-unmerged { border-color: #ef4444; background: #fee2e2; color: #991b1b; }
-      .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { border-color: #d1d5db; background: #f3f4f6; color: #4b5563; }
-      .qgqr-branch-badge-missing { border-style: dashed; text-decoration: line-through; }
+      .qgqr-branch-badge { min-width: 42px; padding: 0; font-size: 10px; font-weight: 750; line-height: 1.4; text-align: center; text-transform: lowercase; }
+      .qgqr-branch-badge-merged { color: #15803d; }
+      .qgqr-branch-badge-unmerged { color: #b91c1c; }
+      .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { color: #6b7280; }
+      .qgqr-branch-badge-missing { text-decoration: line-through; }
       .qgqr-branch-badge-unknown::after { margin-left: 2px; content: '?'; }
-      .qgqr-branch-badge-checking { display: inline-flex; align-items: center; justify-content: center; gap: 3px; border-color: transparent; background: transparent; color: #7a8292; }
+      .qgqr-branch-badge-checking { display: inline-flex; align-items: center; justify-content: center; gap: 3px; color: #7a8292; }
       .qgqr-branch-loading-dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .24; animation: qgqr-dot-wave .9s ease-in-out infinite; }
       .qgqr-branch-loading-dot:nth-child(2) { animation-delay: .15s; }
       .qgqr-branch-loading-dot:nth-child(3) { animation-delay: .3s; }
@@ -2125,10 +2128,10 @@
         .qgqr-favorite-button:hover, .qgqr-favorite-button.qgqr-is-favorite { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
         .qgqr-branch-mr { color: #93c5fd; }
         .qgqr-branch-mr:hover { background: rgba(37,99,235,.18); }
-        .qgqr-branch-badge-merged { border-color: rgba(74,222,128,.4); background: rgba(22,101,52,.22); color: #86efac; }
-        .qgqr-branch-badge-unmerged { border-color: rgba(248,113,113,.4); background: rgba(153,27,27,.2); color: #fca5a5; }
-        .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { border-color: rgba(156,163,175,.35); background: rgba(75,85,99,.2); color: #d1d5db; }
-        .qgqr-branch-badge-checking { border-color: transparent; background: transparent; color: #9ca3af; }
+        .qgqr-branch-badge-merged { color: #86efac; }
+        .qgqr-branch-badge-unmerged { color: #fca5a5; }
+        .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { color: #d1d5db; }
+        .qgqr-branch-badge-checking { color: #9ca3af; }
         .qgqr-type-fork { color: #a99ecf; }
         .qgqr-type-upstream { color: #8daac5; }
       }
