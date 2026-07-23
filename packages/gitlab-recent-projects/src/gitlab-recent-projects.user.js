@@ -67,7 +67,7 @@
       favoritesSubtitle: '已收藏 {count} 个仓库',
       openFavorites: '打开收藏夹',
       showRecentProjects: '返回最近 MR 仓库',
-      branchesSubtitle: '最近 10 个 Fork · 每个最多 5 个分支',
+      branchesSubtitle: '最近 10 个 Fork · 每仓库最多 5 个分支 · 自动检查',
       openBranches: '打开分支状态',
       loadingBranchProjects: '正在读取最近活跃的 Fork…',
       branchProjectsFailed: '无法读取最近活跃的 Fork，请确认仓库权限后重试。',
@@ -75,9 +75,9 @@
       branchLegendMerged: '绿色：已合入',
       branchLegendUnmerged: '红色：未合入',
       branchLegendUnavailable: '灰色：未知或不存在',
-      checkBranchStatus: '检查分支状态',
-      checkingBranchStatus: '正在检查分支状态',
-      retryBranchStatus: '重新检查',
+      refreshBranchStatuses: '重新检查全部分支状态',
+      checkingAllBranchStatuses: '正在检查全部分支状态',
+      createUpstreamMergeRequest: '以 {branch} 为源分支向 Upstream 创建 MR，默认目标 master',
       branchListLoading: '正在读取最近活跃的分支…',
       branchListFailed: '分支读取失败，重新进入分支状态后可重试。',
       branchStatusFailed: '分支状态读取失败，请确认仓库权限后重试。',
@@ -166,7 +166,7 @@
       favoritesSubtitle: '{count} saved repositories',
       openFavorites: 'Open favorites',
       showRecentProjects: 'Back to recent MR repositories',
-      branchesSubtitle: '10 recent forks · Up to 5 branches each',
+      branchesSubtitle: '10 recent forks · Up to 5 branches each · Auto-check',
       openBranches: 'Open branch status',
       loadingBranchProjects: 'Loading recently active forks…',
       branchProjectsFailed: 'Could not load recently active forks. Check repository access and try again.',
@@ -174,9 +174,9 @@
       branchLegendMerged: 'Green: merged',
       branchLegendUnmerged: 'Red: not merged',
       branchLegendUnavailable: 'Gray: unknown or missing',
-      checkBranchStatus: 'Check branch status',
-      checkingBranchStatus: 'Checking branch status',
-      retryBranchStatus: 'Check again',
+      refreshBranchStatuses: 'Recheck all branch statuses',
+      checkingAllBranchStatuses: 'Checking all branch statuses',
+      createUpstreamMergeRequest: 'Create an MR from {branch} to Upstream, targeting master by default',
       branchListLoading: 'Loading recently active branches…',
       branchListFailed: 'Could not load branches. Reopen branch status to try again.',
       branchStatusFailed: 'Could not load branch status. Check repository access and try again.',
@@ -750,6 +750,16 @@
     return url.href;
   }
 
+  function buildUpstreamBranchMergeRequestUrl(project, sourceBranch, targetBranch = 'master') {
+    if (!project.upstream) return null;
+    const url = new URL(`${project.upstream.webUrl.replace(/\/$/, '')}/-/merge_requests/new`);
+    url.searchParams.set('merge_request[source_project_id]', String(project.id));
+    url.searchParams.set('merge_request[source_branch]', sourceBranch);
+    url.searchParams.set('merge_request[target_project_id]', String(project.upstream.id));
+    url.searchParams.set('merge_request[target_branch]', targetBranch);
+    return url.href;
+  }
+
   function buildMyMergeRequestsUrl(project) {
     const url = new URL(`${project.webUrl.replace(/\/$/, '')}/-/merge_requests`);
     url.searchParams.set('scope', 'created_by_me');
@@ -872,6 +882,7 @@
       buildRepositoryBranchPath,
       buildRepositoryBranchesPath,
       buildSearchProjectGroups,
+      buildUpstreamBranchMergeRequestUrl,
       compareUserscriptVersions,
       copyTextToClipboard,
       createUncheckedBranchResults,
@@ -930,6 +941,7 @@
   let branchProjectsStatus = null;
   let isLoadingBranchProjects = false;
   let hasLoadedBranchProjects = false;
+  let isRefreshingBranchStatuses = false;
   let ownedProjectsRequestPromise = null;
   const branchProjectStates = new Map();
   const targetBranchesRequestPromises = new Map();
@@ -1199,44 +1211,53 @@
     return true;
   }
 
-  async function loadBranchMergeStatus(project, branchName) {
+  async function loadBranchProjectStatuses(project) {
     const projectState = branchProjectStates.get(project.id);
     if (projectState?.status !== 'ready') return;
-    const branchIndex = projectState.branches.findIndex(({ branch }) => branch.name === branchName);
-    if (branchIndex < 0 || projectState.branches[branchIndex].checkStatus === 'loading') return;
-
-    const branchResult = projectState.branches[branchIndex];
-    updateBranchResult(project.id, branchName, (currentResult) => ({
-      ...currentResult,
-      checkStatus: 'loading',
-      statuses: Object.fromEntries(BRANCH_TARGET_NAMES.map((target) => [target, 'checking'])),
-    }));
+    const branchNames = projectState.branches.map(({ branch }) => branch.name);
+    for (const branchName of branchNames) {
+      updateBranchResult(project.id, branchName, (currentResult) => ({
+        ...currentResult,
+        checkStatus: 'loading',
+        statuses: Object.fromEntries(BRANCH_TARGET_NAMES.map((target) => [target, 'checking'])),
+      }));
+    }
     renderWidget();
 
     try {
       const targetProject = project.upstream;
       if (!targetProject) throw new LocalizedError('apiShapeInvalid');
       const targetBranchesByName = await getTargetBranches(project);
-      const statuses = await Promise.all(BRANCH_TARGET_NAMES.map(async (targetName) => ([
-        targetName,
-        await resolveBranchMergeStatus(
-          project.id,
-          targetProject.id,
-          branchResult.branch,
-          targetBranchesByName.get(targetName),
-        ),
-      ])));
-      updateBranchResult(project.id, branchName, (currentResult) => ({
-        ...currentResult,
-        checkStatus: 'ready',
-        statuses: Object.fromEntries(statuses),
-      }));
+      for (const branchName of branchNames) {
+        const currentState = branchProjectStates.get(project.id);
+        const branchResult = currentState?.branches.find(
+          ({ branch }) => branch.name === branchName,
+        );
+        if (!branchResult) continue;
+        const statuses = await Promise.all(BRANCH_TARGET_NAMES.map(async (targetName) => ([
+          targetName,
+          await resolveBranchMergeStatus(
+            project.id,
+            targetProject.id,
+            branchResult.branch,
+            targetBranchesByName.get(targetName),
+          ),
+        ])));
+        updateBranchResult(project.id, branchName, (currentResult) => ({
+          ...currentResult,
+          checkStatus: 'ready',
+          statuses: Object.fromEntries(statuses),
+        }));
+        renderWidget();
+      }
     } catch {
-      updateBranchResult(project.id, branchName, (currentResult) => ({
-        ...currentResult,
-        checkStatus: 'error',
-        statuses: null,
-      }));
+      for (const branchName of branchNames) {
+        updateBranchResult(project.id, branchName, (currentResult) => ({
+          ...currentResult,
+          checkStatus: 'error',
+          statuses: Object.fromEntries(BRANCH_TARGET_NAMES.map((target) => [target, 'unknown'])),
+        }));
+      }
     }
     renderWidget();
   }
@@ -1247,6 +1268,29 @@
     );
     renderWidget();
     await Promise.all(requests);
+  }
+
+  async function checkAllVisibleBranchStatuses() {
+    await Promise.all(branchStatusProjects.map(loadBranchProjectStatuses));
+  }
+
+  async function loadBranchStatusView({ force = false } = {}) {
+    if (isRefreshingBranchStatuses) return;
+    isRefreshingBranchStatuses = true;
+    renderWidget();
+    try {
+      if (force) {
+        branchProjectStates.clear();
+        targetBranchesRequestPromises.clear();
+      }
+      await loadBranchStatusProjects({ force });
+      if (activeView !== VIEW_BRANCHES || branchProjectsStatus) return;
+      await loadVisibleBranchProjects();
+      if (activeView === VIEW_BRANCHES) await checkAllVisibleBranchStatuses();
+    } finally {
+      isRefreshingBranchStatuses = false;
+      renderWidget();
+    }
   }
 
   async function loadBranchStatusProjects({ force = false } = {}) {
@@ -1682,29 +1726,21 @@
       row.append(statuses);
     }
 
-    const isLoading = branchResult.checkStatus === 'loading';
-    const buttonLabel = t(
-      isLoading
-        ? 'checkingBranchStatus'
-        : (branchResult.checkStatus === 'idle' ? 'checkBranchStatus' : 'retryBranchStatus'),
+    const mergeRequestUrl = buildUpstreamBranchMergeRequestUrl(
+      project,
+      branchResult.branch.name,
     );
-    const checkButton = createElement('button', 'qgqr-branch-check');
-    checkButton.type = 'button';
-    checkButton.disabled = isLoading;
-    checkButton.title = branchResult.checkStatus === 'error'
-      ? t('branchStatusFailed')
-      : buttonLabel;
-    checkButton.setAttribute(
-      'aria-label',
-      `${buttonLabel}: ${branchResult.branch.name} · ${project.nameWithNamespace}`,
-    );
-    checkButton.classList.toggle('qgqr-is-loading', isLoading);
-    checkButton.classList.toggle('qgqr-has-error', branchResult.checkStatus === 'error');
-    checkButton.append(createIcon('refresh'));
-    checkButton.addEventListener('click', async () => {
-      await loadBranchMergeStatus(project, branchResult.branch.name);
-    });
-    row.append(checkButton);
+    if (mergeRequestUrl) {
+      const mergeRequestLabel = t('createUpstreamMergeRequest', {
+        branch: branchResult.branch.name,
+      });
+      const mergeRequestLink = createElement('a', 'qgqr-branch-mr');
+      mergeRequestLink.href = mergeRequestUrl;
+      mergeRequestLink.title = mergeRequestLabel;
+      mergeRequestLink.setAttribute('aria-label', mergeRequestLabel);
+      mergeRequestLink.append(createIcon('merge'));
+      row.append(mergeRequestLink);
+    }
     return row;
   }
 
@@ -1788,11 +1824,18 @@
             : t('globalSearchSubtitle'))
           : t('recentSubtitle')));
     const refreshButton = widget.querySelector('.qgqr-refresh');
-    refreshButton.hidden = activeView !== VIEW_RECENT || isSearchMode;
-    refreshButton.disabled = isRefreshing;
-    refreshButton.classList.toggle('qgqr-is-spinning', isRefreshing);
-    refreshButton.title = t('refreshRecent');
-    refreshButton.setAttribute('aria-label', t(isRefreshing ? 'refreshing' : 'refreshRecent'));
+    const refreshesBranchStatuses = activeView === VIEW_BRANCHES;
+    const refreshIsLoading = refreshesBranchStatuses
+      ? isRefreshingBranchStatuses
+      : isRefreshing;
+    const refreshLabel = refreshesBranchStatuses
+      ? t(refreshIsLoading ? 'checkingAllBranchStatuses' : 'refreshBranchStatuses')
+      : t(refreshIsLoading ? 'refreshing' : 'refreshRecent');
+    refreshButton.hidden = isFavoritesView || isSearchMode;
+    refreshButton.disabled = refreshIsLoading;
+    refreshButton.classList.toggle('qgqr-is-spinning', refreshIsLoading);
+    refreshButton.title = refreshLabel;
+    refreshButton.setAttribute('aria-label', refreshLabel);
     widget.querySelector('.qgqr-search-loader').hidden = !isSearching;
     widget.querySelector('.qgqr-search-clear').hidden = searchQuery.length === 0;
     widget.lang = currentLanguage;
@@ -1898,6 +1941,8 @@
       branchStatusProjects = selectRecentForkProjects(ownedProjects);
       branchProjectsStatus = null;
       hasLoadedBranchProjects = true;
+      branchProjectStates.clear();
+      targetBranchesRequestPromises.clear();
       saveCache();
       recentStatus = null;
     } catch (error) {
@@ -2016,12 +2061,6 @@
       .qgqr-branch-project + .qgqr-branch-project { margin-top: 8px; border-top: 1px solid var(--gl-border-color-default, #dfe1e6); padding-top: 12px; }
       .qgqr-branch-project:hover { border-color: var(--gl-border-color-default, #dfe1e6); background: transparent; box-shadow: none; }
       .qgqr-branch-project-header { display: flex; min-width: 0; align-items: center; padding-bottom: 7px; }
-      .qgqr-branch-check { display: grid; grid-column: 3; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; padding: 0; background: transparent; color: #1d72c9; cursor: pointer; transition: color .18s ease, background-color .18s ease; }
-      .qgqr-branch-check:hover { background: var(--gl-background-color-subtle, #eff6ff); color: #1d4ed8; }
-      .qgqr-branch-check:disabled { cursor: wait; opacity: .65; }
-      .qgqr-branch-check.qgqr-has-error { color: #dc2626; }
-      .qgqr-branch-check .qgqr-icon { width: 16px; height: 16px; }
-      .qgqr-branch-check.qgqr-is-loading .qgqr-icon { animation: qgqr-spin .7s linear infinite; }
       .qgqr-branch-message { display: block; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); padding: 8px 2px; color: var(--gl-text-color-subtle, #626b7d); font-size: 11px; }
       .qgqr-branch-message-error { color: #b91c1c; }
       .qgqr-branch-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
@@ -2032,6 +2071,9 @@
       .qgqr-branch-link:hover { text-decoration: underline; }
       .qgqr-branch-date { flex: 0 0 auto; color: var(--gl-text-color-subtle, #7a8292); font-size: 10px; }
       .qgqr-branch-badges { display: flex; flex-wrap: nowrap; gap: 3px; }
+      .qgqr-branch-mr { display: grid; grid-column: 3; width: 26px; height: 26px; place-items: center; border-radius: 7px; color: #1d72c9; text-decoration: none; transition: color .18s ease, background-color .18s ease; }
+      .qgqr-branch-mr:hover { background: var(--gl-background-color-subtle, #eff6ff); color: #1d4ed8; }
+      .qgqr-branch-mr .qgqr-icon { width: 16px; height: 16px; }
       .qgqr-branch-badge { min-width: 42px; border: 1px solid; border-radius: 999px; padding: 2px 7px; font-size: 9.5px; font-weight: 750; line-height: 1.35; text-align: center; text-transform: lowercase; }
       .qgqr-branch-badge-merged { border-color: #22c55e; background: #dcfce7; color: #166534; }
       .qgqr-branch-badge-unmerged { border-color: #ef4444; background: #fee2e2; color: #991b1b; }
@@ -2056,14 +2098,14 @@
       .qgqr-menu-action-error { color: #b91c1c; }
       .qgqr-menu-action-success .qgqr-icon { color: #15803d; }
       .qgqr-menu-action-error .qgqr-icon { color: #b91c1c; }
-      .qgqr-type { flex: 0 0 65px; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; font-size: 10px; font-weight: 750; letter-spacing: .025em; text-align: center; text-transform: uppercase; }
-      .qgqr-type-fork { border-color: #ddd6fe; background: #f3f0ff; color: #5b46ba; }
-      .qgqr-type-upstream { border-color: #bfdbfe; background: #eff6ff; color: #175fAD; }
+      .qgqr-type { flex: 0 0 auto; padding: 0; color: var(--gl-text-color-subtle, #626b7d); font-size: 9.5px; font-weight: 650; letter-spacing: .045em; text-transform: uppercase; opacity: .82; }
+      .qgqr-type-fork { color: #7468a8; }
+      .qgqr-type-upstream { color: #567b9f; }
       .qgqr-project-only { font-weight: 600; }
       .qgqr-detail, .qgqr-status { color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
       .qgqr-mr-link { color: var(--gl-text-color-link, #1f75cb); text-decoration: none; }
       .qgqr-status { display: block; padding: 11px 16px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); background: var(--gl-background-color-subtle, #fafbfc); }
-      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-check:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-branch-help:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
+      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-mr:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-branch-help:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
       @keyframes qgqr-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-spin { to { transform: rotate(360deg); } }
       @media (prefers-color-scheme: dark) {
@@ -2071,16 +2113,16 @@
         .qgqr-favorites-button.qgqr-active { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
         .qgqr-branches-button.qgqr-active { border-color: rgba(96,165,250,.45); background: rgba(37,99,235,.18); color: #93c5fd; }
         .qgqr-favorite-button:hover, .qgqr-favorite-button.qgqr-is-favorite { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
-        .qgqr-branch-check { color: #93c5fd; }
-        .qgqr-branch-check:hover { background: rgba(37,99,235,.18); }
+        .qgqr-branch-mr { color: #93c5fd; }
+        .qgqr-branch-mr:hover { background: rgba(37,99,235,.18); }
         .qgqr-branch-badge-merged { border-color: rgba(74,222,128,.4); background: rgba(22,101,52,.22); color: #86efac; }
         .qgqr-branch-badge-unmerged { border-color: rgba(248,113,113,.4); background: rgba(153,27,27,.2); color: #fca5a5; }
         .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { border-color: rgba(156,163,175,.35); background: rgba(75,85,99,.2); color: #d1d5db; }
         .qgqr-branch-badge-checking { border-color: rgba(245,158,11,.4); background: rgba(146,64,14,.18); color: #fde68a; }
-        .qgqr-type-fork { border-color: rgba(167,139,250,.4); background: rgba(109,40,217,.16); color: #c4b5fd; }
-        .qgqr-type-upstream { border-color: rgba(96,165,250,.38); background: rgba(37,99,235,.14); color: #93c5fd; }
+        .qgqr-type-fork { color: #a99ecf; }
+        .qgqr-type-upstream { color: #8daac5; }
       }
-      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader, .qgqr-branch-check.qgqr-is-loading .qgqr-icon { animation: none; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader { animation: none; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
       @media (max-width: 640px) { #${WIDGET_ID} { top: 62px; right: 8px; } .qgqr-toggle { padding: 7px 9px; } .qgqr-panel { width: min(480px, calc(100vw - 16px)); } }
     `;
     document.head.append(style);
@@ -2331,16 +2373,19 @@
       if (panel.hidden) closeProjectMenus(widget);
     });
     languageSelect.addEventListener('change', () => setLanguage(languageSelect.value));
-    refreshButton.addEventListener('click', () => refreshData({ force: true }));
+    refreshButton.addEventListener('click', async () => {
+      if (activeView === VIEW_BRANCHES) {
+        await loadBranchStatusView({ force: true });
+      } else {
+        await refreshData({ force: true });
+      }
+    });
     branchesButton.addEventListener('click', async () => {
       activeView = activeView === VIEW_BRANCHES ? VIEW_RECENT : VIEW_BRANCHES;
       settings.hidden = true;
       settingsButton.setAttribute('aria-expanded', 'false');
       renderWidget();
-      if (activeView === VIEW_BRANCHES) {
-        await loadBranchStatusProjects();
-        if (activeView === VIEW_BRANCHES) await loadVisibleBranchProjects();
-      }
+      if (activeView === VIEW_BRANCHES) await loadBranchStatusView();
     });
     favoritesButton.addEventListener('click', () => {
       activeView = activeView === VIEW_FAVORITES ? VIEW_RECENT : VIEW_FAVORITES;

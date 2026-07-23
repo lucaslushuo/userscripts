@@ -14,6 +14,7 @@ const {
   buildRepositoryComparePath,
   buildRepositoryBranchesPath,
   buildSearchProjectGroups,
+  buildUpstreamBranchMergeRequestUrl,
   compareUserscriptVersions,
   copyTextToClipboard,
   createUncheckedBranchResults,
@@ -480,6 +481,19 @@ test('new merge request URL stays within the selected repository', () => {
   );
 });
 
+test('branch merge request URL prefills the fork source and upstream master target', () => {
+  const upstream = project(1, 'team/app');
+  const fork = project(2, 'lucas/app', upstream);
+  const url = new URL(buildUpstreamBranchMergeRequestUrl(fork, 'feature/login state'));
+
+  assert.equal(url.pathname, '/team/app/-/merge_requests/new');
+  assert.equal(url.searchParams.get('merge_request[source_project_id]'), '2');
+  assert.equal(url.searchParams.get('merge_request[source_branch]'), 'feature/login state');
+  assert.equal(url.searchParams.get('merge_request[target_project_id]'), '1');
+  assert.equal(url.searchParams.get('merge_request[target_branch]'), 'master');
+  assert.equal(buildUpstreamBranchMergeRequestUrl(upstream, 'feature/login'), null);
+});
+
 test('my merge requests URL filters the selected repository by the current user', () => {
   const fork = project(2, 'lucas/app');
   const upstream = project(1, 'team/app');
@@ -537,8 +551,8 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
   assert.equal(
-    translate('zh-CN', 'updateInstalled', { version: '3.10.0' }),
-    'v3.10.0 已更新，重新加载后生效。',
+    translate('zh-CN', 'updateInstalled', { version: '3.11.0' }),
+    'v3.11.0 已更新，重新加载后生效。',
   );
   assert.equal(translate('zh-CN', 'appTitle'), 'gitcube');
   assert.equal(translate('en', 'appTitle'), 'gitcube');
