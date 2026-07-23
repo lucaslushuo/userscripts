@@ -33,7 +33,7 @@
   const COPY_FEEDBACK_DURATION_MS = 1600;
   const DEFAULT_OWNED_ONLY_SEARCH = true;
   const CACHE_TTL_MS = 10 * 60 * 1000;
-  const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+  const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
   const UPDATE_REQUEST_TIMEOUT_MS = 10 * 1000;
   const PUBLISHED_SCRIPT_URL = 'https://lucaslushuo.github.io/userscripts/gitlab-recent-projects.user.js';
   const REPOSITORY_URL = 'https://github.com/lucaslushuo/userscripts';
@@ -131,6 +131,8 @@
       copyRepositoryUrlFailed: '复制失败，请检查浏览器权限',
       settings: '域名设置',
       settingsUpdateAvailable: '域名设置，有脚本更新可用',
+      updateTag: '有新版本',
+      updateTagLabel: '安装脚本更新 v{version}',
       settingsTitle: '当前 GitLab 站点已启用',
       settingsDescription: '脚本仅在这个 GitLab 域名下读取同源数据。',
       disableCurrentOrigin: '停用当前域名',
@@ -230,6 +232,8 @@
       copyRepositoryUrlFailed: 'Copy failed. Check your browser permissions',
       settings: 'Domain settings',
       settingsUpdateAvailable: 'Domain settings, script update available',
+      updateTag: 'UPDATE AVAILABLE',
+      updateTagLabel: 'Install script update v{version}',
       settingsTitle: 'This GitLab site is enabled',
       settingsDescription: 'The script only reads same-origin data from this GitLab domain.',
       disableCurrentOrigin: 'Disable this domain',
@@ -331,6 +335,12 @@
       showInstall: updateStatus === 'available',
       showReload: false,
     };
+  }
+
+  function shouldPollForUserscriptUpdates(visibilityState, updateStatus, awaitingReload) {
+    return visibilityState === 'visible'
+      && updateStatus !== 'available'
+      && !awaitingReload;
   }
 
   function isGitLabPage(documentObject) {
@@ -904,6 +914,7 @@
       saveFavoriteProjects,
       selectRecentForkProjects,
       selectRecentBranches,
+      shouldPollForUserscriptUpdates,
       toggleFavoriteProject,
       translate,
     };
@@ -1457,6 +1468,11 @@
         ['path', { d: 'M5 12h14' }],
         ['path', { d: 'm13 6 6 6-6 6' }],
       ],
+      download: [
+        ['path', { d: 'M12 3v12' }],
+        ['path', { d: 'm7 10 5 5 5-5' }],
+        ['path', { d: 'M5 21h14' }],
+      ],
       search: [
         ['circle', { cx: '11', cy: '11', r: '8' }],
         ['path', { d: 'm21 21-4.3-4.3' }],
@@ -1848,6 +1864,15 @@
     widget.querySelector('.qgqr-search-clear').hidden = searchQuery.length === 0;
     widget.lang = currentLanguage;
     widget.querySelector('.qgqr-toggle-label').textContent = t('toggleLabel');
+    const hasActionableUpdate = updateState.status === 'available' && !updateAwaitingReload;
+    const updateTag = widget.querySelector('.qgqr-update-tag');
+    const updateTagLabel = updateState.latestVersion
+      ? t('updateTagLabel', { version: updateState.latestVersion })
+      : t('updateTag');
+    updateTag.hidden = !hasActionableUpdate;
+    updateTag.title = updateTagLabel;
+    updateTag.setAttribute('aria-label', updateTagLabel);
+    widget.querySelector('.qgqr-update-tag-label').textContent = t('updateTag');
     const panel = widget.querySelector('.qgqr-panel');
     panel.setAttribute('aria-label', t('panelAriaLabel'));
     widget.querySelector('.qgqr-header-icon').replaceChildren(
@@ -1880,7 +1905,6 @@
     widget.querySelector('.qgqr-language-zh').textContent = t('chineseLanguage');
     widget.querySelector('.qgqr-language-en').textContent = t('englishLanguage');
     const settingsButton = widget.querySelector('.qgqr-settings-button');
-    const hasActionableUpdate = updateState.status === 'available' && !updateAwaitingReload;
     const settingsLabel = t(hasActionableUpdate ? 'settingsUpdateAvailable' : 'settings');
     settingsButton.title = settingsLabel;
     settingsButton.setAttribute('aria-label', settingsLabel);
@@ -1971,6 +1995,11 @@
       #${WIDGET_ID} svg, #${WIDGET_ID} svg * { fill: none !important; stroke: currentColor !important; stroke-width: 1.75 !important; }
       .qgqr-icon { width: 18px; height: 18px; flex: 0 0 18px; }
       .qgqr-inline-icon { width: 13px; height: 13px; margin-left: 3px; vertical-align: -2px; }
+      .qgqr-update-tag { position: absolute; top: -18px; right: 10px; z-index: 2; display: inline-flex; min-height: 28px; align-items: center; gap: 6px; border: 1px solid #8f7cff; border-radius: 999px; padding: 5px 11px; background: #7357f6; color: #fff; box-shadow: 0 5px 14px rgba(82,56,214,.34), inset 0 1px 0 rgba(255,255,255,.28); cursor: pointer; font-size: 10.5px; font-weight: 750; letter-spacing: .025em; line-height: 1; text-decoration: none; white-space: nowrap; animation: qgqr-update-tag-enter .18s ease-out; transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease; }
+      .qgqr-update-tag:hover { border-color: #806cf4; background: #6247e8; color: #fff; box-shadow: 0 6px 17px rgba(82,56,214,.43), inset 0 1px 0 rgba(255,255,255,.2); text-decoration: none; }
+      .qgqr-update-tag:active { border-color: #6c55df; background: #5238d6; box-shadow: 0 3px 9px rgba(82,56,214,.36), inset 0 1px 0 rgba(255,255,255,.16); }
+      .qgqr-update-tag[hidden] { display: none; }
+      .qgqr-update-tag .qgqr-icon { width: 14px; height: 14px; flex-basis: 14px; }
       .qgqr-toggle { display: flex; align-items: center; gap: 8px; min-height: 40px; border: 1px solid rgba(99,102,241,.28); border-radius: 12px; padding: 8px 10px 8px 12px; background: var(--gl-background-color-default, rgba(255,255,255,.96)); color: var(--gl-text-color-default, #172033); box-shadow: 0 6px 20px rgba(24,32,51,.13), 0 1px 2px rgba(24,32,51,.08); cursor: pointer; font-weight: 650; letter-spacing: -.01em; backdrop-filter: blur(14px); transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease; }
       .qgqr-toggle:hover { border-color: #7c6cf2; background: var(--gl-background-color-subtle, #f8f7ff); box-shadow: 0 9px 26px rgba(76,61,174,.18), 0 1px 2px rgba(24,32,51,.08); }
       .qgqr-toggle .qgqr-icon { color: #6d5bd0; }
@@ -2117,8 +2146,9 @@
       .qgqr-detail, .qgqr-status { color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
       .qgqr-mr-link { color: var(--gl-text-color-link, #1f75cb); text-decoration: none; }
       .qgqr-status { display: block; padding: 11px 16px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); background: var(--gl-background-color-subtle, #fafbfc); }
-      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-mr:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-branch-help:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
+      .qgqr-toggle:focus-visible, .qgqr-update-tag:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-mr:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-branch-help:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
       @keyframes qgqr-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes qgqr-update-tag-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-spin { to { transform: rotate(360deg); } }
       @keyframes qgqr-dot-wave { 0%, 60%, 100% { opacity: .24; } 30% { opacity: .92; } }
       @media (prefers-color-scheme: dark) {
@@ -2135,7 +2165,7 @@
         .qgqr-type-fork { color: #a99ecf; }
         .qgqr-type-upstream { color: #8daac5; }
       }
-      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader, .qgqr-branch-loading-dot { animation: none; } .qgqr-branch-loading-dot { opacity: .55; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-update-tag, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader, .qgqr-branch-loading-dot { animation: none; } .qgqr-branch-loading-dot { opacity: .55; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
       @media (max-width: 640px) { #${WIDGET_ID} { top: 62px; right: 8px; } .qgqr-toggle { padding: 7px 9px; } .qgqr-panel { width: min(480px, calc(100vw - 16px)); } }
     `;
     document.head.append(style);
@@ -2198,6 +2228,15 @@
     addStyles();
     const widget = createElement('div');
     widget.id = WIDGET_ID;
+    const updateTag = createElement('a', 'qgqr-update-tag');
+    updateTag.href = PUBLISHED_SCRIPT_URL;
+    updateTag.target = '_blank';
+    updateTag.rel = 'noopener noreferrer';
+    updateTag.hidden = true;
+    updateTag.append(
+      createIcon('download'),
+      createElement('span', 'qgqr-update-tag-label', t('updateTag')),
+    );
     const toggle = createElement('button', 'qgqr-toggle');
     toggle.type = 'button';
     toggle.append(
@@ -2377,7 +2416,7 @@
       createElement('ol', 'qgqr-list'),
       createElement('span', 'qgqr-status', statusText(recentStatus)),
     );
-    widget.append(toggle, panel);
+    widget.append(updateTag, toggle, panel);
     document.body.append(widget);
 
     toggle.addEventListener('click', () => {
@@ -2407,10 +2446,12 @@
       renderWidget();
     });
     updateCheckButton.addEventListener('click', () => checkForUserscriptUpdates({ force: true }));
-    installUpdateLink.addEventListener('click', () => {
+    const markUpdateAwaitingReload = () => {
       updateAwaitingReload = true;
       renderWidget();
-    });
+    };
+    updateTag.addEventListener('click', markUpdateAwaitingReload);
+    installUpdateLink.addEventListener('click', markUpdateAwaitingReload);
     reloadAfterUpdateButton.addEventListener('click', () => window.location.reload());
     settingsButton.addEventListener('click', () => {
       settings.hidden = !settings.hidden;
@@ -2462,5 +2503,15 @@
   }
   createWidget();
   refreshData();
-  checkForUserscriptUpdates();
+  const pollForUserscriptUpdates = () => {
+    if (!shouldPollForUserscriptUpdates(
+      document.visibilityState,
+      updateState.status,
+      updateAwaitingReload,
+    )) return;
+    void checkForUserscriptUpdates();
+  };
+  pollForUserscriptUpdates();
+  window.setInterval(pollForUserscriptUpdates, UPDATE_CHECK_INTERVAL_MS);
+  document.addEventListener('visibilitychange', pollForUserscriptUpdates);
 })();

@@ -35,6 +35,7 @@ const {
   saveFavoriteProjects,
   selectRecentForkProjects,
   selectRecentBranches,
+  shouldPollForUserscriptUpdates,
   toggleFavoriteProject,
   translate,
 } = require('../src/gitlab-recent-projects.user.js');
@@ -550,6 +551,8 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('en', 'apiRequestFailed', { status: 401 }), 'GitLab API request failed (HTTP 401)');
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
+  assert.equal(translate('zh-CN', 'updateTag'), '有新版本');
+  assert.equal(translate('en', 'updateTag'), 'UPDATE AVAILABLE');
   assert.equal(
     translate('zh-CN', 'updateInstalled', { version: '3.14.0' }),
     'v3.14.0 已更新，重新加载后生效。',
@@ -584,4 +587,12 @@ test('update flow exposes only the next relevant action', () => {
     showInstall: false,
     showReload: false,
   });
+});
+
+test('update polling runs only for visible pages without a pending update', () => {
+  assert.equal(shouldPollForUserscriptUpdates('visible', 'current', false), true);
+  assert.equal(shouldPollForUserscriptUpdates('visible', 'error', false), true);
+  assert.equal(shouldPollForUserscriptUpdates('hidden', 'current', false), false);
+  assert.equal(shouldPollForUserscriptUpdates('visible', 'available', false), false);
+  assert.equal(shouldPollForUserscriptUpdates('visible', 'current', true), false);
 });
