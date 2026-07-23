@@ -16,6 +16,7 @@ const {
   buildSearchProjectGroups,
   compareUserscriptVersions,
   copyTextToClipboard,
+  createUncheckedBranchResults,
   disableOrigin,
   enableOrigin,
   extractPublishedUserscriptVersion,
@@ -371,6 +372,22 @@ test('recent branches exclude environment branches and keep latest commit order'
   );
 });
 
+test('recent branch rows are visible before merge status checks run', () => {
+  const branches = [
+    branch('feature/visible-first', '2026-07-22T00:00:00Z'),
+    branch('fix/also-visible', '2026-07-21T00:00:00Z'),
+  ];
+
+  assert.deepEqual(
+    createUncheckedBranchResults(branches),
+    branches.map((visibleBranch) => ({
+      branch: visibleBranch,
+      checkStatus: 'idle',
+      statuses: null,
+    })),
+  );
+});
+
 test('branch status API paths encode project IDs and branch names', () => {
   const branchesUrl = new URL(buildRepositoryBranchesPath(42), ORIGIN);
   assert.equal(branchesUrl.pathname, '/api/v4/projects/42/repository/branches');
@@ -520,10 +537,11 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
   assert.equal(
-    translate('zh-CN', 'updateInstalled', { version: '3.9.0' }),
-    'v3.9.0 已更新，重新加载后生效。',
+    translate('zh-CN', 'updateInstalled', { version: '3.10.0' }),
+    'v3.10.0 已更新，重新加载后生效。',
   );
-  assert.equal(translate('zh-CN', 'favoritesTitle'), '收藏夹');
+  assert.equal(translate('zh-CN', 'appTitle'), 'gitcube');
+  assert.equal(translate('en', 'appTitle'), 'gitcube');
   assert.equal(
     translate('en', 'addFavorite', { project: 'team/app' }),
     'Add team/app to favorites',
