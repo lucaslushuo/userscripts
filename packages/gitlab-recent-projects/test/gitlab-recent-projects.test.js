@@ -3,28 +3,35 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  buildBranchStatusProjects,
   buildRecentMrGroups,
   buildGlobalSearchFallbackPath,
   buildMyMergeRequestsUrl,
   buildNewMergeRequestUrl,
   buildPipelinesUrl,
   buildProjectSearchPath,
+  buildRepositoryBranchPath,
+  buildRepositoryComparePath,
+  buildRepositoryBranchesPath,
   buildSearchProjectGroups,
   compareUserscriptVersions,
   copyTextToClipboard,
   disableOrigin,
   enableOrigin,
   extractPublishedUserscriptVersion,
+  getCrossProjectBranchMergeStatus,
   getOriginConfigurationError,
   getUpdateActionState,
   isGitLabPage,
   isOriginEnabled,
   normalizeHttpsOrigin,
+  normalizeBranch,
   normalizeMergeRequest,
   normalizeProject,
   readFavoriteProjects,
   resolvePreferredLanguage,
   saveFavoriteProjects,
+  selectRecentBranches,
   toggleFavoriteProject,
   translate,
 } = require('../src/gitlab-recent-projects.user.js');
@@ -301,6 +308,112 @@ test('global search keeps API result order and applies the result limit', () => 
   assert.equal(groups[19].upstream.id, 20);
 });
 
+test('branch status projects prioritize favorites and deduplicate recent repositories', () => {
+  const upstream = project(1, 'team/app');
+  const fork = project(2, 'lucas/app', upstream);
+  const favoriteUpstream = project(3, 'team/favorite');
+  const favoriteFork = project(4, 'lucas/favorite', favoriteUpstream);
+  const standalone = project(5, 'team/standalone');
+  const recentGroups = [{
+    upstream,
+    forks: [fork],
+    mergeRequestCount: 1,
+    latestMergeRequest: mergeRequest(101, 12, 2, 1, '2026-07-15T01:00:00Z'),
+  }];
+
+  const result = buildBranchStatusProjects(
+    [favoriteFork, fork, standalone],
+    recentGroups,
+    10,
+  );
+
+  assert.deepEqual(result.map(({ id }) => id), [favoriteFork.id, fork.id]);
+});
+
+function branch(name, committedAt, commitId = `${name}-commit`) {
+  return {
+    name,
+    webUrl: `${ORIGIN}/team/app/-/tree/${encodeURIComponent(name)}`,
+    commitId,
+    committedAt: Date.parse(committedAt),
+  };
+}
+
+test('normalizes same-origin branches and rejects unsafe branch data', () => {
+  const normalized = normalizeBranch({
+    name: 'feature/branch-status',
+    web_url: `${ORIGIN}/team/app/-/tree/feature%2Fbranch-status`,
+    commit: {
+      id: 'abc123',
+      committed_date: '2026-07-20T08:00:00Z',
+    },
+  }, ORIGIN);
+
+  assert.equal(normalized.name, 'feature/branch-status');
+  assert.equal(normalized.commitId, 'abc123');
+  assert.equal(normalizeBranch({
+    name: 'feature/unsafe',
+    web_url: 'https://attacker.example/team/app/-/tree/feature',
+    commit: {
+      id: 'abc123',
+      committed_date: '2026-07-20T08:00:00Z',
+    },
+  }, ORIGIN), null);
+});
+
+test('recent branches exclude environment branches and stale activity', () => {
+  const now = Date.parse('2026-07-23T00:00:00Z');
+  const branches = [
+    branch('feature/newer', '2026-07-22T00:00:00Z'),
+    branch('dev', '2026-07-21T00:00:00Z'),
+    branch('feature/older', '2026-06-01T00:00:00Z'),
+    branch('feature/stale', '2026-01-01T00:00:00Z'),
+    branch('blue', '2026-07-20T00:00:00Z'),
+  ];
+
+  assert.deepEqual(
+    selectRecentBranches(branches, now, 5).map(({ name }) => name),
+    ['feature/newer', 'feature/older'],
+  );
+});
+
+test('branch status API paths encode project IDs and branch names', () => {
+  const branchesUrl = new URL(buildRepositoryBranchesPath(42), ORIGIN);
+  assert.equal(branchesUrl.pathname, '/api/v4/projects/42/repository/branches');
+  assert.equal(branchesUrl.searchParams.get('per_page'), '100');
+
+  assert.equal(
+    buildRepositoryBranchPath(42, 'release/blue'),
+    '/api/v4/projects/42/repository/branches/release%2Fblue',
+  );
+
+  const compareUrl = new URL(
+    buildRepositoryComparePath(2, 1, 'feature/status', 'dev'),
+    ORIGIN,
+  );
+  assert.equal(compareUrl.pathname, '/api/v4/projects/2/repository/compare');
+  assert.equal(compareUrl.searchParams.get('from'), 'dev');
+  assert.equal(compareUrl.searchParams.get('to'), 'feature/status');
+  assert.equal(compareUrl.searchParams.get('from_project_id'), '1');
+});
+
+test('branch merge status distinguishes merged, unmerged, and missing targets', () => {
+  const source = branch('feature/app', '2026-07-22T00:00:00Z', 'source-sha');
+  const target = branch('dev', '2026-07-21T00:00:00Z', 'target-sha');
+
+  assert.equal(getCrossProjectBranchMergeStatus(source, null, []), 'missing');
+  assert.equal(getCrossProjectBranchMergeStatus(source, target, []), 'merged');
+  assert.equal(getCrossProjectBranchMergeStatus(source, target, [{ id: 'source-sha' }]), 'unmerged');
+  assert.equal(
+    getCrossProjectBranchMergeStatus(
+      source,
+      { ...target, commitId: 'source-sha' },
+      [{ id: 'source-sha' }],
+    ),
+    'merged',
+  );
+});
+
 test('owned-only search uses lightweight parameters without changing the query', () => {
   const path = buildProjectSearchPath('mobile sdk', true);
   const url = new URL(path, ORIGIN);
@@ -402,13 +515,17 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
   assert.equal(
-    translate('zh-CN', 'updateInstalled', { version: '3.7.0' }),
-    'v3.7.0 已更新，重新加载后生效。',
+    translate('zh-CN', 'updateInstalled', { version: '3.8.0' }),
+    'v3.8.0 已更新，重新加载后生效。',
   );
   assert.equal(translate('zh-CN', 'favoritesTitle'), '收藏夹');
   assert.equal(
     translate('en', 'addFavorite', { project: 'team/app' }),
     'Add team/app to favorites',
+  );
+  assert.equal(
+    translate('zh-CN', 'branchMerged', { target: 'dev' }),
+    'dev 已合入',
   );
 });
 

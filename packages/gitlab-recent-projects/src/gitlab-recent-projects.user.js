@@ -2,7 +2,7 @@
 // @name         GitLab 最近 MR 仓库快捷入口
 // @namespace    https://github.com/lucaslushuo/userscripts
 // @version      __USERSCRIPT_VERSION__
-// @description  根据最近创建的 MR 或全局搜索，快速打开 Fork 与 Upstream 仓库，支持中英文切换。
+// @description  快速打开最近 MR 仓库、收藏项目，并检查 Fork 活跃分支是否已合入 Upstream。
 // @author       lucaslushuo
 // @match        https://*/*
 // @updateURL    https://lucaslushuo.github.io/userscripts/gitlab-recent-projects.user.js
@@ -24,6 +24,11 @@
   const MAX_PROJECTS_PER_QUERY = 100;
   const MAX_SEARCH_PROJECTS_PER_QUERY = 20;
   const MAX_SEARCH_GROUPS = 20;
+  const MAX_BRANCH_STATUS_PROJECTS = 10;
+  const MAX_RECENT_BRANCHES_PER_PROJECT = 5;
+  const MAX_BRANCHES_PER_PROJECT_REQUEST = 100;
+  const ACTIVE_BRANCH_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+  const BRANCH_TARGET_NAMES = ['dev', 'test', 'blue', 'master'];
   const MIN_SEARCH_QUERY_LENGTH = 2;
   const SEARCH_DEBOUNCE_MS = 350;
   const COPY_FEEDBACK_DURATION_MS = 1600;
@@ -42,6 +47,9 @@
   const STYLE_ID = `${WIDGET_ID}-style`;
   const LANGUAGE_ZH_CN = 'zh-CN';
   const LANGUAGE_EN = 'en';
+  const VIEW_RECENT = 'recent';
+  const VIEW_FAVORITES = 'favorites';
+  const VIEW_BRANCHES = 'branches';
   const SUPPORTED_LANGUAGES = new Set([LANGUAGE_ZH_CN, LANGUAGE_EN]);
   const GITLAB_META_SELECTORS = [
     'meta[name="application-name"]',
@@ -52,7 +60,7 @@
   const TRANSLATIONS = {
     [LANGUAGE_ZH_CN]: {
       toggleLabel: '最近 MR 仓库',
-      panelAriaLabel: '最近提交 MR 的仓库和 GitLab 仓库搜索',
+      panelAriaLabel: 'GitLab 最近 MR 仓库、收藏夹、分支状态和仓库搜索',
       title: '最近提交 MR 的仓库',
       recentSubtitle: '按 MR 创建时间排列 · 最多 20 组',
       globalSearchSubtitle: '搜索整个 GitLab · 同组展示 Fork / Upstream',
@@ -61,6 +69,24 @@
       favoritesSubtitle: '已收藏 {count} 个仓库',
       openFavorites: '打开收藏夹',
       showRecentProjects: '返回最近 MR 仓库',
+      branchesTitle: '分支状态',
+      branchesSubtitle: 'Fork 近 90 天活跃分支 · 对照 Upstream',
+      openBranches: '打开分支状态',
+      noBranchProjects: '没有可检查的 Fork，可先收藏 Fork 仓库或创建跨仓库 MR。',
+      checkBranchStatus: '检查分支状态',
+      checkingBranchStatus: '正在检查分支状态',
+      retryBranchStatus: '重新检查',
+      branchStatusIdle: '按需读取 Fork 活跃分支，并对照 Upstream 环境分支。',
+      branchStatusLoading: '正在读取分支并检查合入状态…',
+      branchStatusFailed: '分支状态读取失败，请确认仓库权限后重试。',
+      noActiveBranches: '近 90 天没有需要检查的业务分支。',
+      branchUpdatedOn: '最近提交 {date}',
+      branchMerged: '{target} 已合入',
+      branchUnmerged: '{target} 未合入',
+      branchTargetMissing: '{target} 不存在',
+      branchStatusUnknown: '{target} 未知',
+      branchStatusChecking: '{target} 检查中',
+      branchStatusSemantics: 'Fork 对照 Upstream 环境分支；按 Git 提交祖先关系判断，squash / rebase 合并可能仍显示未合入。',
       refreshRecent: '刷新最近 MR',
       refreshing: '正在刷新',
       searchPlaceholder: '搜索整个 GitLab 的仓库',
@@ -130,7 +156,7 @@
     },
     [LANGUAGE_EN]: {
       toggleLabel: 'Recent MR repos',
-      panelAriaLabel: 'Recent MR repositories and GitLab repository search',
+      panelAriaLabel: 'GitLab recent MR repositories, favorites, branch status, and repository search',
       title: 'Recently submitted MR repositories',
       recentSubtitle: 'Sorted by MR creation time · Up to 20 groups',
       globalSearchSubtitle: 'Search all GitLab · Fork / Upstream grouped together',
@@ -139,6 +165,24 @@
       favoritesSubtitle: '{count} saved repositories',
       openFavorites: 'Open favorites',
       showRecentProjects: 'Back to recent MR repositories',
+      branchesTitle: 'Branch status',
+      branchesSubtitle: 'Fork branches active in the last 90 days · Compare with Upstream',
+      openBranches: 'Open branch status',
+      noBranchProjects: 'No forks to check. Save a fork or create a cross-project MR first.',
+      checkBranchStatus: 'Check branch status',
+      checkingBranchStatus: 'Checking branch status',
+      retryBranchStatus: 'Check again',
+      branchStatusIdle: 'Load active fork branches on demand and compare them with Upstream targets.',
+      branchStatusLoading: 'Loading branches and checking merge status…',
+      branchStatusFailed: 'Could not load branch status. Check repository access and try again.',
+      noActiveBranches: 'No business branches need checking from the last 90 days.',
+      branchUpdatedOn: 'Last commit {date}',
+      branchMerged: 'Merged into {target}',
+      branchUnmerged: 'Not merged into {target}',
+      branchTargetMissing: '{target} missing',
+      branchStatusUnknown: '{target} unknown',
+      branchStatusChecking: 'Checking {target}',
+      branchStatusSemantics: 'Forks use Upstream targets. Git ancestry is used, so squash or rebase merges can still appear unmerged.',
       refreshRecent: 'Refresh recent MRs',
       refreshing: 'Refreshing',
       searchPlaceholder: 'Search repositories across GitLab',
@@ -511,6 +555,30 @@
     };
   }
 
+  function normalizeBranch(value, allowedOrigin) {
+    if (!isRecord(value)
+      || typeof value.name !== 'string'
+      || value.name.trim() === ''
+      || !isRecord(value.commit)
+      || typeof value.commit.id !== 'string'
+      || value.commit.id.trim() === '') {
+      return null;
+    }
+
+    const webUrl = normalizeWebUrl(value.web_url, allowedOrigin);
+    const committedAt = Date.parse(
+      typeof value.commit.committed_date === 'string' ? value.commit.committed_date : '',
+    );
+    if (!webUrl || !Number.isFinite(committedAt)) return null;
+
+    return {
+      name: value.name,
+      webUrl,
+      commitId: value.commit.id,
+      committedAt,
+    };
+  }
+
   function buildRecentMrGroups(projects, mergeRequests, limit = MAX_GROUPS) {
     const projectsById = new Map();
     for (const project of projects) {
@@ -575,6 +643,69 @@
     }
 
     return [...groups.values()].slice(0, limit);
+  }
+
+  function buildBranchStatusProjects(
+    favoriteProjects,
+    recentGroups,
+    limit = MAX_BRANCH_STATUS_PROJECTS,
+  ) {
+    const candidateProjects = [
+      ...favoriteProjects.filter((project) => project.upstream),
+      ...recentGroups.flatMap((group) => group.forks),
+    ].filter((project) => project.upstream);
+    return [...new Map(candidateProjects.map((project) => [project.id, project])).values()]
+      .slice(0, limit);
+  }
+
+  function selectRecentBranches(
+    branches,
+    now = Date.now(),
+    limit = MAX_RECENT_BRANCHES_PER_PROJECT,
+  ) {
+    const targetNames = new Set(BRANCH_TARGET_NAMES);
+    const oldestActiveTimestamp = now - ACTIVE_BRANCH_WINDOW_MS;
+    return branches
+      .filter((branch) => (
+        !targetNames.has(branch.name) && branch.committedAt >= oldestActiveTimestamp
+      ))
+      .sort((left, right) => (
+        right.committedAt - left.committedAt || left.name.localeCompare(right.name)
+      ))
+      .slice(0, limit);
+  }
+
+  function buildRepositoryBranchesPath(projectId) {
+    return `/api/v4/projects/${encodeURIComponent(projectId)}/repository/branches?${new URLSearchParams({
+      per_page: String(MAX_BRANCHES_PER_PROJECT_REQUEST),
+    })}`;
+  }
+
+  function buildRepositoryBranchPath(projectId, branchName) {
+    return `/api/v4/projects/${encodeURIComponent(projectId)}/repository/branches/${encodeURIComponent(branchName)}`;
+  }
+
+  function buildRepositoryComparePath(
+    sourceProjectId,
+    targetProjectId,
+    sourceBranchName,
+    targetBranchName,
+  ) {
+    // GitLab resolves `to` in the endpoint project and `from` in `from_project_id`.
+    // Keeping the Fork branch on the `to` side makes `commits` represent work not in Upstream.
+    return `/api/v4/projects/${encodeURIComponent(sourceProjectId)}/repository/compare?${new URLSearchParams({
+      from: targetBranchName,
+      to: sourceBranchName,
+      from_project_id: String(targetProjectId),
+    })}`;
+  }
+
+  function getCrossProjectBranchMergeStatus(sourceBranch, targetBranch, comparisonCommits) {
+    if (!targetBranch) return 'missing';
+    if (sourceBranch.commitId === targetBranch.commitId) return 'merged';
+    return Array.isArray(comparisonCommits) && comparisonCommits.length === 0
+      ? 'merged'
+      : 'unmerged';
   }
 
   function buildProjectSearchPath(query, ownedOnly) {
@@ -713,29 +844,36 @@
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
+      buildBranchStatusProjects,
       buildRecentMrGroups,
       buildGlobalSearchFallbackPath,
       buildMyMergeRequestsUrl,
       buildNewMergeRequestUrl,
       buildPipelinesUrl,
       buildProjectSearchPath,
+      buildRepositoryComparePath,
+      buildRepositoryBranchPath,
+      buildRepositoryBranchesPath,
       buildSearchProjectGroups,
       compareUserscriptVersions,
       copyTextToClipboard,
       disableOrigin,
       enableOrigin,
       extractPublishedUserscriptVersion,
+      getCrossProjectBranchMergeStatus,
       getUpdateActionState,
       getOriginConfigurationError,
       inferTargetProject,
       isGitLabPage,
       isOriginEnabled,
       normalizeHttpsOrigin,
+      normalizeBranch,
       normalizeMergeRequest,
       normalizeProject,
       readFavoriteProjects,
       resolvePreferredLanguage,
       saveFavoriteProjects,
+      selectRecentBranches,
       toggleFavoriteProject,
       translate,
     };
@@ -768,7 +906,8 @@
   let searchDebounceTimer = null;
   let searchRequestController = null;
   let favoriteProjects = readFavoriteProjects(window.localStorage, window.location.origin);
-  let isFavoritesView = false;
+  let activeView = VIEW_RECENT;
+  const branchProjectStates = new Map();
   const installedUserscriptVersion = getInstalledUserscriptVersion();
   let updateState = { status: 'idle', latestVersion: null };
   let updateAwaitingReload = false;
@@ -868,7 +1007,7 @@
     renderWidget();
   }
 
-  async function fetchJson(path, { signal } = {}) {
+  async function fetchJsonValue(path, { signal } = {}) {
     const response = await window.fetch(path, {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
@@ -881,7 +1020,18 @@
     } catch {
       throw new LocalizedError('apiParseFailed');
     }
+    return payload;
+  }
+
+  async function fetchJson(path, options) {
+    const payload = await fetchJsonValue(path, options);
     if (!Array.isArray(payload)) throw new LocalizedError('apiShapeInvalid');
+    return payload;
+  }
+
+  async function fetchJsonRecord(path, options) {
+    const payload = await fetchJsonValue(path, options);
+    if (!isRecord(payload)) throw new LocalizedError('apiShapeInvalid');
     return payload;
   }
 
@@ -924,6 +1074,101 @@
     return payload
       .map((project) => normalizeProject(project, window.location.origin))
       .filter(Boolean);
+  }
+
+  async function fetchProjectBranches(projectId) {
+    const payload = await fetchJson(buildRepositoryBranchesPath(projectId));
+    return payload
+      .map((branch) => normalizeBranch(branch, window.location.origin))
+      .filter(Boolean);
+  }
+
+  async function fetchProjectBranch(projectId, branchName) {
+    try {
+      const payload = await fetchJsonRecord(buildRepositoryBranchPath(projectId, branchName));
+      const branch = normalizeBranch(payload, window.location.origin);
+      if (!branch) throw new LocalizedError('apiShapeInvalid');
+      return branch;
+    } catch (error) {
+      if (error instanceof LocalizedError && error.translationParameters.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async function resolveBranchMergeStatus(sourceProjectId, targetProjectId, sourceBranch, targetBranch) {
+    if (!targetBranch) return 'missing';
+    if (sourceBranch.commitId === targetBranch.commitId) return 'merged';
+    try {
+      const comparison = await fetchJsonRecord(buildRepositoryComparePath(
+        sourceProjectId,
+        targetProjectId,
+        sourceBranch.name,
+        targetBranch.name,
+      ));
+      return Array.isArray(comparison.commits)
+        ? getCrossProjectBranchMergeStatus(sourceBranch, targetBranch, comparison.commits)
+        : 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  async function loadBranchProjectStatus(project) {
+    const currentState = branchProjectStates.get(project.id);
+    if (currentState?.status === 'loading') return;
+
+    branchProjectStates.set(project.id, { status: 'loading', branches: [] });
+    renderWidget();
+    try {
+      const targetProject = project.upstream;
+      if (!targetProject) throw new LocalizedError('apiShapeInvalid');
+      const [sourceBranches, targetBranches] = await Promise.all([
+        fetchProjectBranches(project.id),
+        Promise.all(BRANCH_TARGET_NAMES.map(
+          (branchName) => fetchProjectBranch(targetProject.id, branchName),
+        )),
+      ]);
+      const recentBranches = selectRecentBranches(sourceBranches);
+      const targetBranchesByName = new Map(
+        targetBranches.filter(Boolean).map((branch) => [branch.name, branch]),
+      );
+      const branchResults = recentBranches.map((branch) => ({
+        branch,
+        statuses: Object.fromEntries(BRANCH_TARGET_NAMES.map((target) => [target, 'checking'])),
+      }));
+      branchProjectStates.set(project.id, { status: 'loading', branches: branchResults });
+      renderWidget();
+
+      for (let index = 0; index < branchResults.length; index += 1) {
+        const branch = branchResults[index].branch;
+        const statuses = await Promise.all(BRANCH_TARGET_NAMES.map(async (targetName) => ([
+          targetName,
+          await resolveBranchMergeStatus(
+            project.id,
+            targetProject.id,
+            branch,
+            targetBranchesByName.get(targetName),
+          ),
+        ])));
+        branchResults[index] = { branch, statuses: Object.fromEntries(statuses) };
+        branchProjectStates.set(project.id, {
+          status: 'loading',
+          branches: [...branchResults],
+        });
+        renderWidget();
+      }
+
+      branchProjectStates.set(project.id, { status: 'ready', branches: branchResults });
+    } catch (error) {
+      branchProjectStates.set(project.id, {
+        status: 'error',
+        branches: [],
+        error: statusFromError(error, 'branchStatusFailed'),
+      });
+    }
+    renderWidget();
   }
 
   function deduplicateProjects(projectLists) {
@@ -1094,6 +1339,13 @@
       ],
       star: [
         ['path', { d: 'm12 2 3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2z' }],
+      ],
+      branch: [
+        ['circle', { cx: '6', cy: '4', r: '2' }],
+        ['circle', { cx: '18', cy: '6', r: '2' }],
+        ['circle', { cx: '6', cy: '20', r: '2' }],
+        ['path', { d: 'M6 6v12' }],
+        ['path', { d: 'M18 8a8 8 0 0 1-8 8H6' }],
       ],
       settings: [
         ['path', { d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.08a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.92 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.92a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z' }],
@@ -1275,7 +1527,89 @@
   function renderFavoriteProject(project) {
     const item = createElement('li', 'qgqr-item');
     const content = createElement('div', 'qgqr-item-content');
-    content.append(createProjectEntry(project, null));
+    content.append(createProjectEntry(project, project.upstream ? 'fork' : 'upstream'));
+    item.append(content);
+    return item;
+  }
+
+  function branchStatusTranslationKey(status) {
+    return {
+      merged: 'branchMerged',
+      unmerged: 'branchUnmerged',
+      missing: 'branchTargetMissing',
+      unknown: 'branchStatusUnknown',
+      checking: 'branchStatusChecking',
+    }[status] || 'branchStatusUnknown';
+  }
+
+  function renderBranchStatusBadge(targetName, status) {
+    return createElement(
+      'span',
+      `qgqr-branch-badge qgqr-branch-badge-${status}`,
+      t(branchStatusTranslationKey(status), { target: targetName }),
+    );
+  }
+
+  function renderBranchResult(branchResult) {
+    const row = createElement('li', 'qgqr-branch-row');
+    const branchInfo = createElement('div', 'qgqr-branch-info');
+    const branchLink = createElement('a', 'qgqr-branch-link', branchResult.branch.name);
+    branchLink.href = branchResult.branch.webUrl;
+    branchInfo.append(
+      branchLink,
+      createElement('span', 'qgqr-branch-date', t('branchUpdatedOn', {
+        date: formatDate(branchResult.branch.committedAt),
+      })),
+    );
+    const statuses = createElement('div', 'qgqr-branch-badges');
+    for (const targetName of BRANCH_TARGET_NAMES) {
+      statuses.append(renderBranchStatusBadge(
+        targetName,
+        branchResult.statuses[targetName] || 'unknown',
+      ));
+    }
+    row.append(branchInfo, statuses);
+    return row;
+  }
+
+  function renderBranchProject(project) {
+    const state = branchProjectStates.get(project.id) || { status: 'idle', branches: [] };
+    const item = createElement('li', 'qgqr-item qgqr-branch-project');
+    const content = createElement('div', 'qgqr-item-content');
+    const header = createElement('div', 'qgqr-branch-project-header');
+    header.append(createProjectLink(project, project.upstream ? 'fork' : 'upstream'));
+    const buttonLabel = state.status === 'loading'
+      ? t('checkingBranchStatus')
+      : t(state.status === 'idle' ? 'checkBranchStatus' : 'retryBranchStatus');
+    const checkButton = createElement('button', 'qgqr-branch-check', buttonLabel);
+    checkButton.type = 'button';
+    checkButton.disabled = state.status === 'loading';
+    checkButton.setAttribute('aria-label', `${buttonLabel}: ${project.nameWithNamespace}`);
+    if (state.status === 'loading') checkButton.classList.add('qgqr-is-loading');
+    checkButton.addEventListener('click', () => loadBranchProjectStatus(project));
+    header.append(checkButton);
+    content.append(header);
+
+    if (state.status === 'idle') {
+      content.append(createElement('span', 'qgqr-branch-message', t('branchStatusIdle')));
+    } else if (state.status === 'error') {
+      content.append(createElement(
+        'span',
+        'qgqr-branch-message qgqr-branch-message-error',
+        statusText(state.error),
+      ));
+    } else if (state.branches.length === 0) {
+      content.append(createElement(
+        'span',
+        'qgqr-branch-message',
+        t(state.status === 'loading' ? 'branchStatusLoading' : 'noActiveBranches'),
+      ));
+    } else {
+      const branchList = createElement('ul', 'qgqr-branch-list');
+      branchList.append(...state.branches.map(renderBranchResult));
+      content.append(branchList);
+    }
+
     item.append(content);
     return item;
   }
@@ -1284,38 +1618,49 @@
     const widget = document.getElementById(WIDGET_ID);
     if (!widget) return;
 
-    const isSearchMode = !isFavoritesView && searchQuery.length > 0;
-    const groups = isFavoritesView
-      ? favoriteProjects
-      : (isSearchMode
-        ? buildSearchProjectGroups(searchProjects)
-        : buildRecentMrGroups(projects, mergeRequests));
-    const renderItem = isFavoritesView
-      ? renderFavoriteProject
-      : (isSearchMode ? renderSearchGroup : renderGroup);
+    const isFavoritesView = activeView === VIEW_FAVORITES;
+    const isBranchesView = activeView === VIEW_BRANCHES;
+    const isSearchMode = activeView === VIEW_RECENT && searchQuery.length > 0;
+    const recentGroups = buildRecentMrGroups(projects, mergeRequests);
+    const groups = isBranchesView
+      ? buildBranchStatusProjects(favoriteProjects, recentGroups)
+      : (isFavoritesView
+        ? favoriteProjects
+        : (isSearchMode ? buildSearchProjectGroups(searchProjects) : recentGroups));
+    const renderItem = isBranchesView
+      ? renderBranchProject
+      : (isFavoritesView
+        ? renderFavoriteProject
+        : (isSearchMode ? renderSearchGroup : renderGroup));
     widget.querySelector('.qgqr-list').replaceChildren(...groups.map(renderItem));
     widget.querySelector('.qgqr-count').textContent = String(groups.length);
     const statusElement = widget.querySelector('.qgqr-status');
-    const activeStatus = isFavoritesView ? null : (isSearchMode ? searchStatus : recentStatus);
-    const emptyStatus = isFavoritesView
-      ? t('noFavorites')
-      : t(
-        isSearchMode ? 'noSearchResults' : 'noRecentMergeRequests',
-        { query: searchQuery },
-      );
+    const activeStatus = isFavoritesView || isBranchesView
+      ? null
+      : (isSearchMode ? searchStatus : recentStatus);
+    const emptyStatus = isBranchesView
+      ? t('noBranchProjects')
+      : (isFavoritesView
+        ? t('noFavorites')
+        : t(
+          isSearchMode ? 'noSearchResults' : 'noRecentMergeRequests',
+          { query: searchQuery },
+        ));
     statusElement.textContent = groups.length === 0 && !activeStatus
       ? emptyStatus
       : statusText(activeStatus);
     statusElement.hidden = groups.length > 0 && !activeStatus;
-    widget.querySelector('.qgqr-subtitle').textContent = isFavoritesView
-      ? t('favoritesSubtitle', { count: favoriteProjects.length })
-      : (isSearchMode
-        ? (onlyOwnedSearch
-          ? t('ownedSearchSubtitle')
-          : t('globalSearchSubtitle'))
-        : t('recentSubtitle'));
+    widget.querySelector('.qgqr-subtitle').textContent = isBranchesView
+      ? t('branchesSubtitle')
+      : (isFavoritesView
+        ? t('favoritesSubtitle', { count: favoriteProjects.length })
+        : (isSearchMode
+          ? (onlyOwnedSearch
+            ? t('ownedSearchSubtitle')
+            : t('globalSearchSubtitle'))
+          : t('recentSubtitle')));
     const refreshButton = widget.querySelector('.qgqr-refresh');
-    refreshButton.hidden = isFavoritesView || isSearchMode;
+    refreshButton.hidden = activeView !== VIEW_RECENT || isSearchMode;
     refreshButton.disabled = isRefreshing;
     refreshButton.classList.toggle('qgqr-is-spinning', isRefreshing);
     refreshButton.title = t('refreshRecent');
@@ -1327,9 +1672,17 @@
     const panel = widget.querySelector('.qgqr-panel');
     panel.setAttribute('aria-label', t('panelAriaLabel'));
     widget.querySelector('.qgqr-header-icon').replaceChildren(
-      createIcon(isFavoritesView ? 'star' : 'merge'),
+      createIcon(isBranchesView ? 'branch' : (isFavoritesView ? 'star' : 'merge')),
     );
-    widget.querySelector('.qgqr-title').textContent = t(isFavoritesView ? 'favoritesTitle' : 'title');
+    widget.querySelector('.qgqr-title').textContent = t(
+      isBranchesView ? 'branchesTitle' : (isFavoritesView ? 'favoritesTitle' : 'title'),
+    );
+    const branchesButton = widget.querySelector('.qgqr-branches-button');
+    const branchesButtonLabel = t(isBranchesView ? 'showRecentProjects' : 'openBranches');
+    branchesButton.title = branchesButtonLabel;
+    branchesButton.setAttribute('aria-label', branchesButtonLabel);
+    branchesButton.setAttribute('aria-pressed', String(isBranchesView));
+    branchesButton.classList.toggle('qgqr-active', isBranchesView);
     const favoritesButton = widget.querySelector('.qgqr-favorites-button');
     const favoritesButtonLabel = t(isFavoritesView ? 'showRecentProjects' : 'openFavorites');
     favoritesButton.title = favoritesButtonLabel;
@@ -1378,7 +1731,10 @@
     repositoryLink.title = t('repositoryLink');
     repositoryLink.setAttribute('aria-label', t('repositoryLink'));
     const settingsOpen = !widget.querySelector('.qgqr-settings').hidden;
-    widget.querySelector('.qgqr-search-area').hidden = settingsOpen || isFavoritesView;
+    widget.querySelector('.qgqr-search-area').hidden = settingsOpen || activeView !== VIEW_RECENT;
+    const branchNote = widget.querySelector('.qgqr-branch-note');
+    branchNote.textContent = t('branchStatusSemantics');
+    branchNote.hidden = settingsOpen || !isBranchesView;
     widget.querySelector('.qgqr-list').hidden = settingsOpen;
     if (settingsOpen) {
       statusElement.hidden = true;
@@ -1444,6 +1800,7 @@
       .qgqr-action:hover { border-color: var(--gl-border-color-default, #dfe1e6); background: var(--gl-background-color-subtle, #f4f5f7); color: #5943b6; }
       .qgqr-favorites-button.qgqr-active { border-color: #f4c55d; background: #fffbeb; color: #b45309; }
       .qgqr-favorites-button.qgqr-active .qgqr-icon * { fill: currentColor !important; }
+      .qgqr-branches-button.qgqr-active { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
       .qgqr-settings-button { position: relative; }
       .qgqr-settings-button.qgqr-has-update::after { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border: 2px solid var(--gl-background-color-default, #fff); border-radius: 50%; background: #ef4444; box-shadow: 0 0 0 1px rgba(185,28,28,.12); content: ''; }
       .qgqr-action[hidden] { display: none; }
@@ -1501,6 +1858,8 @@
       .qgqr-owned-filter { display: inline-flex; align-items: center; gap: 7px; color: var(--gl-text-color-subtle, #626b7d); cursor: pointer; font-size: 11.5px; user-select: none; }
       .qgqr-owned-checkbox { width: 15px; height: 15px; margin: 0; accent-color: #6d5bd0; cursor: pointer; }
       .qgqr-filter-hint { color: var(--gl-text-color-subtle, #7a8292); font-size: 10.5px; }
+      .qgqr-branch-note { margin: 0; border-bottom: 1px solid var(--gl-border-color-default, #e6e7eb); padding: 9px 14px; background: #fffbeb; color: #92400e; font-size: 10.5px; line-height: 1.45; }
+      .qgqr-branch-note[hidden] { display: none; }
       .qgqr-list { max-height: calc(min(78vh, 740px) - 179px); margin: 0; padding: 8px; overflow-y: auto; list-style: none; scrollbar-width: thin; }
       .qgqr-item { display: flex; gap: 10px; margin: 2px 0; border: 1px solid transparent; border-radius: 11px; padding: 10px 11px; transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease; }
       .qgqr-item:hover { border-color: var(--gl-border-color-default, #e2e4e9); background: var(--gl-background-color-subtle, #fafafe); box-shadow: 0 2px 8px rgba(24,32,51,.05); }
@@ -1511,6 +1870,26 @@
       .qgqr-project-link { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; border-radius: 5px; color: var(--gl-text-color-link, #1f63b5); text-decoration: none; outline: none; }
       .qgqr-project-link:hover .qgqr-project-name, .qgqr-mr-link:hover { text-decoration: underline; }
       .qgqr-project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .qgqr-branch-project { border-color: var(--gl-border-color-default, #e2e4e9); background: var(--gl-background-color-subtle, #fafbfc); }
+      .qgqr-branch-project-header { display: flex; min-width: 0; align-items: center; gap: 8px; }
+      .qgqr-branch-check { flex: 0 0 auto; border: 1px solid #93c5fd; border-radius: 7px; padding: 4px 8px; background: #eff6ff; color: #1d4ed8; cursor: pointer; font: inherit; font-size: 10.5px; font-weight: 700; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
+      .qgqr-branch-check:hover { border-color: #60a5fa; background: #dbeafe; }
+      .qgqr-branch-check:disabled { cursor: wait; opacity: .7; }
+      .qgqr-branch-check.qgqr-is-loading::before { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border: 1.5px solid rgba(29,78,216,.25); border-top-color: currentColor; border-radius: 50%; animation: qgqr-spin .7s linear infinite; content: ''; vertical-align: -1px; }
+      .qgqr-branch-message { color: var(--gl-text-color-subtle, #626b7d); font-size: 11px; }
+      .qgqr-branch-message-error { color: #b91c1c; }
+      .qgqr-branch-list { display: flex; flex-direction: column; gap: 7px; margin: 4px 0 0; padding: 0; list-style: none; }
+      .qgqr-branch-row { border-top: 1px solid var(--gl-border-color-default, #e6e7eb); padding-top: 7px; }
+      .qgqr-branch-info { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .qgqr-branch-link { overflow: hidden; color: var(--gl-text-color-link, #1f63b5); font: 600 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+      .qgqr-branch-link:hover { text-decoration: underline; }
+      .qgqr-branch-date { flex: 0 0 auto; color: var(--gl-text-color-subtle, #7a8292); font-size: 10px; }
+      .qgqr-branch-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+      .qgqr-branch-badge { border: 1px solid; border-radius: 999px; padding: 2px 6px; font-size: 9.5px; font-weight: 700; line-height: 1.35; }
+      .qgqr-branch-badge-merged { border-color: #86efac; background: #f0fdf4; color: #166534; }
+      .qgqr-branch-badge-unmerged { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+      .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { border-color: #d1d5db; background: #f3f4f6; color: #4b5563; }
+      .qgqr-branch-badge-checking { border-color: #fde68a; background: #fffbeb; color: #92400e; }
       .qgqr-favorite-button, .qgqr-more-button { display: grid; width: 27px; height: 25px; flex: 0 0 27px; place-items: center; border: 1px solid transparent; border-radius: 7px; padding: 0; background: transparent; color: var(--gl-text-color-subtle, #626b7d); cursor: pointer; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
       .qgqr-favorite-button:hover { border-color: #f4c55d; background: #fffbeb; color: #b45309; }
       .qgqr-favorite-button.qgqr-is-favorite { border-color: #f4c55d; color: #b45309; }
@@ -1535,17 +1914,24 @@
       .qgqr-detail, .qgqr-status { color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
       .qgqr-mr-link { color: var(--gl-text-color-link, #1f75cb); text-decoration: none; }
       .qgqr-status { display: block; padding: 11px 16px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); background: var(--gl-background-color-subtle, #fafbfc); }
-      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
+      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-check:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
       @keyframes qgqr-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-spin { to { transform: rotate(360deg); } }
       @media (prefers-color-scheme: dark) {
         .qgqr-count, .qgqr-header-icon { background: rgba(139,92,246,.2); color: #c4b5fd; }
         .qgqr-favorites-button.qgqr-active { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
+        .qgqr-branches-button.qgqr-active { border-color: rgba(96,165,250,.45); background: rgba(37,99,235,.18); color: #93c5fd; }
         .qgqr-favorite-button:hover, .qgqr-favorite-button.qgqr-is-favorite { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
+        .qgqr-branch-note { background: rgba(146,64,14,.16); color: #fbbf24; }
+        .qgqr-branch-check { border-color: rgba(96,165,250,.45); background: rgba(37,99,235,.18); color: #93c5fd; }
+        .qgqr-branch-badge-merged { border-color: rgba(74,222,128,.4); background: rgba(22,101,52,.22); color: #86efac; }
+        .qgqr-branch-badge-unmerged { border-color: rgba(248,113,113,.4); background: rgba(153,27,27,.2); color: #fca5a5; }
+        .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { border-color: rgba(156,163,175,.35); background: rgba(75,85,99,.2); color: #d1d5db; }
+        .qgqr-branch-badge-checking { border-color: rgba(245,158,11,.4); background: rgba(146,64,14,.18); color: #fde68a; }
         .qgqr-type-fork { border-color: rgba(167,139,250,.4); background: rgba(109,40,217,.16); color: #c4b5fd; }
         .qgqr-type-upstream { border-color: rgba(96,165,250,.38); background: rgba(37,99,235,.14); color: #93c5fd; }
       }
-      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader { animation: none; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader, .qgqr-branch-check.qgqr-is-loading::before { animation: none; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
       @media (max-width: 640px) { #${WIDGET_ID} { top: 62px; right: 8px; } .qgqr-toggle { padding: 7px 9px; } .qgqr-panel { width: min(480px, calc(100vw - 16px)); } }
     `;
     document.head.append(style);
@@ -1642,13 +2028,19 @@
     favoritesButton.setAttribute('aria-label', t('openFavorites'));
     favoritesButton.setAttribute('aria-pressed', 'false');
     favoritesButton.append(createIcon('star'));
+    const branchesButton = createElement('button', 'qgqr-action qgqr-branches-button');
+    branchesButton.type = 'button';
+    branchesButton.title = t('openBranches');
+    branchesButton.setAttribute('aria-label', t('openBranches'));
+    branchesButton.setAttribute('aria-pressed', 'false');
+    branchesButton.append(createIcon('branch'));
     const settingsButton = createElement('button', 'qgqr-action qgqr-settings-button');
     settingsButton.type = 'button';
     settingsButton.title = t('settings');
     settingsButton.setAttribute('aria-label', t('settings'));
     settingsButton.setAttribute('aria-expanded', 'false');
     settingsButton.append(createIcon('settings'));
-    header.append(favoritesButton, settingsButton, refreshButton);
+    header.append(branchesButton, favoritesButton, settingsButton, refreshButton);
     const settings = createElement('section', 'qgqr-settings');
     settings.hidden = true;
     settings.append(
@@ -1748,10 +2140,13 @@
     ownedFilter.append(ownedCheckbox, createElement('span', 'qgqr-owned-filter-label', t('ownedFilter')));
     searchOptions.append(ownedFilter, createElement('span', 'qgqr-filter-hint', t('ownedHint')));
     searchArea.append(searchBox, searchOptions);
+    const branchNote = createElement('p', 'qgqr-branch-note', t('branchStatusSemantics'));
+    branchNote.hidden = true;
     panel.append(
       header,
       settings,
       searchArea,
+      branchNote,
       createElement('ol', 'qgqr-list'),
       createElement('span', 'qgqr-status', statusText(recentStatus)),
     );
@@ -1765,8 +2160,14 @@
     });
     languageSelect.addEventListener('change', () => setLanguage(languageSelect.value));
     refreshButton.addEventListener('click', () => refreshData({ force: true }));
+    branchesButton.addEventListener('click', () => {
+      activeView = activeView === VIEW_BRANCHES ? VIEW_RECENT : VIEW_BRANCHES;
+      settings.hidden = true;
+      settingsButton.setAttribute('aria-expanded', 'false');
+      renderWidget();
+    });
     favoritesButton.addEventListener('click', () => {
-      isFavoritesView = !isFavoritesView;
+      activeView = activeView === VIEW_FAVORITES ? VIEW_RECENT : VIEW_FAVORITES;
       settings.hidden = true;
       settingsButton.setAttribute('aria-expanded', 'false');
       renderWidget();
