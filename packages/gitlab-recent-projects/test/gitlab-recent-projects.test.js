@@ -551,11 +551,13 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
   assert.equal(
-    translate('zh-CN', 'updateInstalled', { version: '3.13.0' }),
-    'v3.13.0 已更新，重新加载后生效。',
+    translate('zh-CN', 'updateInstalled', { version: '3.14.0' }),
+    'v3.14.0 已更新，重新加载后生效。',
   );
   assert.equal(translate('zh-CN', 'appTitle'), 'gitcube');
   assert.equal(translate('en', 'appTitle'), 'gitcube');
+  assert.equal(translate('zh-CN', 'branchLegendMerged'), '已合入');
+  assert.equal(translate('en', 'branchLegendUnavailable'), 'Unknown or missing');
   assert.equal(
     translate('en', 'addFavorite', { project: 'team/app' }),
     'Add team/app to favorites',
