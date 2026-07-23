@@ -27,7 +27,6 @@
   const MAX_BRANCH_STATUS_PROJECTS = 10;
   const MAX_RECENT_BRANCHES_PER_PROJECT = 5;
   const MAX_BRANCHES_PER_PROJECT_REQUEST = 100;
-  const ACTIVE_BRANCH_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
   const BRANCH_TARGET_NAMES = ['dev', 'test', 'blue', 'master'];
   const MIN_SEARCH_QUERY_LENGTH = 2;
   const SEARCH_DEBOUNCE_MS = 350;
@@ -70,16 +69,20 @@
       openFavorites: '打开收藏夹',
       showRecentProjects: '返回最近 MR 仓库',
       branchesTitle: '分支状态',
-      branchesSubtitle: 'Fork 近 90 天活跃分支 · 对照 Upstream',
+      branchesSubtitle: '最近 10 个 Fork · 每个最多 5 个分支',
       openBranches: '打开分支状态',
-      noBranchProjects: '没有可检查的 Fork，可先收藏 Fork 仓库或创建跨仓库 MR。',
+      loadingBranchProjects: '正在读取最近活跃的 Fork…',
+      branchProjectsFailed: '无法读取最近活跃的 Fork，请确认仓库权限后重试。',
+      noBranchProjects: '没有找到当前账号拥有的 Fork 仓库。',
+      branchLegendMerged: '绿色：已合入',
+      branchLegendUnmerged: '红色：未合入',
+      branchLegendUnavailable: '灰色：未知或不存在',
       checkBranchStatus: '检查分支状态',
       checkingBranchStatus: '正在检查分支状态',
       retryBranchStatus: '重新检查',
-      branchStatusIdle: '按需读取 Fork 活跃分支，并对照 Upstream 环境分支。',
       branchStatusLoading: '正在读取分支并检查合入状态…',
       branchStatusFailed: '分支状态读取失败，请确认仓库权限后重试。',
-      noActiveBranches: '近 90 天没有需要检查的业务分支。',
+      noActiveBranches: '没有需要检查的业务分支。',
       branchUpdatedOn: '最近提交 {date}',
       branchMerged: '{target} 已合入',
       branchUnmerged: '{target} 未合入',
@@ -166,16 +169,20 @@
       openFavorites: 'Open favorites',
       showRecentProjects: 'Back to recent MR repositories',
       branchesTitle: 'Branch status',
-      branchesSubtitle: 'Fork branches active in the last 90 days · Compare with Upstream',
+      branchesSubtitle: '10 recent forks · Up to 5 branches each',
       openBranches: 'Open branch status',
-      noBranchProjects: 'No forks to check. Save a fork or create a cross-project MR first.',
+      loadingBranchProjects: 'Loading recently active forks…',
+      branchProjectsFailed: 'Could not load recently active forks. Check repository access and try again.',
+      noBranchProjects: 'No fork repositories owned by the current account were found.',
+      branchLegendMerged: 'Green: merged',
+      branchLegendUnmerged: 'Red: not merged',
+      branchLegendUnavailable: 'Gray: unknown or missing',
       checkBranchStatus: 'Check branch status',
       checkingBranchStatus: 'Checking branch status',
       retryBranchStatus: 'Check again',
-      branchStatusIdle: 'Load active fork branches on demand and compare them with Upstream targets.',
       branchStatusLoading: 'Loading branches and checking merge status…',
       branchStatusFailed: 'Could not load branch status. Check repository access and try again.',
-      noActiveBranches: 'No business branches need checking from the last 90 days.',
+      noActiveBranches: 'No business branches need checking.',
       branchUpdatedOn: 'Last commit {date}',
       branchMerged: 'Merged into {target}',
       branchUnmerged: 'Not merged into {target}',
@@ -645,30 +652,23 @@
     return [...groups.values()].slice(0, limit);
   }
 
-  function buildBranchStatusProjects(
-    favoriteProjects,
-    recentGroups,
-    limit = MAX_BRANCH_STATUS_PROJECTS,
-  ) {
-    const candidateProjects = [
-      ...favoriteProjects.filter((project) => project.upstream),
-      ...recentGroups.flatMap((group) => group.forks),
-    ].filter((project) => project.upstream);
-    return [...new Map(candidateProjects.map((project) => [project.id, project])).values()]
-      .slice(0, limit);
+  function selectRecentForkProjects(projects, limit = MAX_BRANCH_STATUS_PROJECTS) {
+    if (limit <= 0) return [];
+    const recentForks = [];
+    const seenProjectIds = new Set();
+    for (const project of projects) {
+      if (!project.upstream || seenProjectIds.has(project.id)) continue;
+      seenProjectIds.add(project.id);
+      recentForks.push(project);
+      if (recentForks.length >= limit) break;
+    }
+    return recentForks;
   }
 
-  function selectRecentBranches(
-    branches,
-    now = Date.now(),
-    limit = MAX_RECENT_BRANCHES_PER_PROJECT,
-  ) {
+  function selectRecentBranches(branches, limit = MAX_RECENT_BRANCHES_PER_PROJECT) {
     const targetNames = new Set(BRANCH_TARGET_NAMES);
-    const oldestActiveTimestamp = now - ACTIVE_BRANCH_WINDOW_MS;
     return branches
-      .filter((branch) => (
-        !targetNames.has(branch.name) && branch.committedAt >= oldestActiveTimestamp
-      ))
+      .filter((branch) => !targetNames.has(branch.name))
       .sort((left, right) => (
         right.committedAt - left.committedAt || left.name.localeCompare(right.name)
       ))
@@ -678,6 +678,17 @@
   function buildRepositoryBranchesPath(projectId) {
     return `/api/v4/projects/${encodeURIComponent(projectId)}/repository/branches?${new URLSearchParams({
       per_page: String(MAX_BRANCHES_PER_PROJECT_REQUEST),
+    })}`;
+  }
+
+  function buildProjectsPath(filterName) {
+    return `/api/v4/projects?${new URLSearchParams({
+      [filterName]: 'true',
+      order_by: 'last_activity_at',
+      sort: 'desc',
+      archived: 'false',
+      simple: 'false',
+      per_page: String(MAX_PROJECTS_PER_QUERY),
     })}`;
   }
 
@@ -844,13 +855,13 @@
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      buildBranchStatusProjects,
       buildRecentMrGroups,
       buildGlobalSearchFallbackPath,
       buildMyMergeRequestsUrl,
       buildNewMergeRequestUrl,
       buildPipelinesUrl,
       buildProjectSearchPath,
+      buildProjectsPath,
       buildRepositoryComparePath,
       buildRepositoryBranchPath,
       buildRepositoryBranchesPath,
@@ -873,6 +884,7 @@
       readFavoriteProjects,
       resolvePreferredLanguage,
       saveFavoriteProjects,
+      selectRecentForkProjects,
       selectRecentBranches,
       toggleFavoriteProject,
       translate,
@@ -907,6 +919,11 @@
   let searchRequestController = null;
   let favoriteProjects = readFavoriteProjects(window.localStorage, window.location.origin);
   let activeView = VIEW_RECENT;
+  let branchStatusProjects = [];
+  let branchProjectsStatus = null;
+  let isLoadingBranchProjects = false;
+  let hasLoadedBranchProjects = false;
+  let ownedProjectsRequestPromise = null;
   const branchProjectStates = new Map();
   const installedUserscriptVersion = getInstalledUserscriptVersion();
   let updateState = { status: 'idle', latestVersion: null };
@@ -1062,18 +1079,20 @@
   }
 
   async function fetchProjects(filterName) {
-    const query = new URLSearchParams({
-      [filterName]: 'true',
-      order_by: 'last_activity_at',
-      sort: 'desc',
-      archived: 'false',
-      simple: 'false',
-      per_page: String(MAX_PROJECTS_PER_QUERY),
-    });
-    const payload = await fetchJson(`/api/v4/projects?${query}`);
+    const payload = await fetchJson(buildProjectsPath(filterName));
     return payload
       .map((project) => normalizeProject(project, window.location.origin))
       .filter(Boolean);
+  }
+
+  function fetchOwnedProjects() {
+    if (!ownedProjectsRequestPromise) {
+      ownedProjectsRequestPromise = fetchProjects('owned')
+        .finally(() => {
+          ownedProjectsRequestPromise = null;
+        });
+    }
+    return ownedProjectsRequestPromise;
   }
 
   async function fetchProjectBranches(projectId) {
@@ -1130,7 +1149,10 @@
           (branchName) => fetchProjectBranch(targetProject.id, branchName),
         )),
       ]);
-      const recentBranches = selectRecentBranches(sourceBranches);
+      const recentBranches = selectRecentBranches(
+        sourceBranches,
+        MAX_RECENT_BRANCHES_PER_PROJECT,
+      );
       const targetBranchesByName = new Map(
         targetBranches.filter(Boolean).map((branch) => [branch.name, branch]),
       );
@@ -1169,6 +1191,25 @@
       });
     }
     renderWidget();
+  }
+
+  async function loadBranchStatusProjects({ force = false } = {}) {
+    if (isLoadingBranchProjects || (!force && hasLoadedBranchProjects)) return;
+
+    isLoadingBranchProjects = true;
+    branchProjectsStatus = createStatus('loadingBranchProjects');
+    renderWidget();
+    try {
+      const ownedProjects = await fetchOwnedProjects();
+      branchStatusProjects = selectRecentForkProjects(ownedProjects);
+      branchProjectsStatus = null;
+      hasLoadedBranchProjects = true;
+    } catch (error) {
+      branchProjectsStatus = statusFromError(error, 'branchProjectsFailed');
+    } finally {
+      isLoadingBranchProjects = false;
+      renderWidget();
+    }
   }
 
   function deduplicateProjects(projectLists) {
@@ -1346,6 +1387,11 @@
         ['circle', { cx: '6', cy: '20', r: '2' }],
         ['path', { d: 'M6 6v12' }],
         ['path', { d: 'M18 8a8 8 0 0 1-8 8H6' }],
+      ],
+      info: [
+        ['circle', { cx: '12', cy: '12', r: '9' }],
+        ['path', { d: 'M12 11v5' }],
+        ['path', { d: 'M12 8h.01' }],
       ],
       settings: [
         ['path', { d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.08a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.92 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.92a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z' }],
@@ -1543,11 +1589,16 @@
   }
 
   function renderBranchStatusBadge(targetName, status) {
-    return createElement(
+    const badge = createElement(
       'span',
       `qgqr-branch-badge qgqr-branch-badge-${status}`,
-      t(branchStatusTranslationKey(status), { target: targetName }),
+      targetName,
     );
+    const accessibleStatus = t(branchStatusTranslationKey(status), { target: targetName });
+    badge.setAttribute('role', 'img');
+    badge.setAttribute('aria-label', accessibleStatus);
+    badge.title = accessibleStatus;
+    return badge;
   }
 
   function renderBranchResult(branchResult) {
@@ -1581,30 +1632,32 @@
     const buttonLabel = state.status === 'loading'
       ? t('checkingBranchStatus')
       : t(state.status === 'idle' ? 'checkBranchStatus' : 'retryBranchStatus');
-    const checkButton = createElement('button', 'qgqr-branch-check', buttonLabel);
+    const checkButton = createElement('button', 'qgqr-branch-check');
     checkButton.type = 'button';
     checkButton.disabled = state.status === 'loading';
+    checkButton.title = buttonLabel;
     checkButton.setAttribute('aria-label', `${buttonLabel}: ${project.nameWithNamespace}`);
+    checkButton.append(createIcon('refresh'));
     if (state.status === 'loading') checkButton.classList.add('qgqr-is-loading');
     checkButton.addEventListener('click', () => loadBranchProjectStatus(project));
     header.append(checkButton);
     content.append(header);
 
-    if (state.status === 'idle') {
-      content.append(createElement('span', 'qgqr-branch-message', t('branchStatusIdle')));
-    } else if (state.status === 'error') {
+    if (state.status === 'error') {
       content.append(createElement(
         'span',
         'qgqr-branch-message qgqr-branch-message-error',
         statusText(state.error),
       ));
-    } else if (state.branches.length === 0) {
+    } else if (state.status !== 'idle' && state.branches.length === 0) {
       content.append(createElement(
         'span',
         'qgqr-branch-message',
-        t(state.status === 'loading' ? 'branchStatusLoading' : 'noActiveBranches'),
+        t(state.status === 'loading'
+          ? 'branchStatusLoading'
+          : 'noActiveBranches'),
       ));
-    } else {
+    } else if (state.status !== 'idle') {
       const branchList = createElement('ul', 'qgqr-branch-list');
       branchList.append(...state.branches.map(renderBranchResult));
       content.append(branchList);
@@ -1623,7 +1676,7 @@
     const isSearchMode = activeView === VIEW_RECENT && searchQuery.length > 0;
     const recentGroups = buildRecentMrGroups(projects, mergeRequests);
     const groups = isBranchesView
-      ? buildBranchStatusProjects(favoriteProjects, recentGroups)
+      ? branchStatusProjects
       : (isFavoritesView
         ? favoriteProjects
         : (isSearchMode ? buildSearchProjectGroups(searchProjects) : recentGroups));
@@ -1635,9 +1688,9 @@
     widget.querySelector('.qgqr-list').replaceChildren(...groups.map(renderItem));
     widget.querySelector('.qgqr-count').textContent = String(groups.length);
     const statusElement = widget.querySelector('.qgqr-status');
-    const activeStatus = isFavoritesView || isBranchesView
-      ? null
-      : (isSearchMode ? searchStatus : recentStatus);
+    const activeStatus = isBranchesView
+      ? branchProjectsStatus
+      : (isFavoritesView ? null : (isSearchMode ? searchStatus : recentStatus));
     const emptyStatus = isBranchesView
       ? t('noBranchProjects')
       : (isFavoritesView
@@ -1732,9 +1785,14 @@
     repositoryLink.setAttribute('aria-label', t('repositoryLink'));
     const settingsOpen = !widget.querySelector('.qgqr-settings').hidden;
     widget.querySelector('.qgqr-search-area').hidden = settingsOpen || activeView !== VIEW_RECENT;
-    const branchNote = widget.querySelector('.qgqr-branch-note');
-    branchNote.textContent = t('branchStatusSemantics');
-    branchNote.hidden = settingsOpen || !isBranchesView;
+    const branchToolbar = widget.querySelector('.qgqr-branch-toolbar');
+    branchToolbar.hidden = settingsOpen || !isBranchesView;
+    widget.querySelector('.qgqr-legend-merged-text').textContent = t('branchLegendMerged');
+    widget.querySelector('.qgqr-legend-unmerged-text').textContent = t('branchLegendUnmerged');
+    widget.querySelector('.qgqr-legend-unavailable-text').textContent = t('branchLegendUnavailable');
+    const branchHelp = widget.querySelector('.qgqr-branch-help');
+    branchHelp.title = t('branchStatusSemantics');
+    branchHelp.setAttribute('aria-label', t('branchStatusSemantics'));
     widget.querySelector('.qgqr-list').hidden = settingsOpen;
     if (settingsOpen) {
       statusElement.hidden = true;
@@ -1760,10 +1818,13 @@
       const [nextMergeRequests, memberProjects, ownedProjects] = await Promise.all([
         fetchMergeRequests(),
         fetchProjects('membership'),
-        fetchProjects('owned'),
+        fetchOwnedProjects(),
       ]);
       mergeRequests = nextMergeRequests;
       projects = deduplicateProjects([memberProjects, ownedProjects]);
+      branchStatusProjects = selectRecentForkProjects(ownedProjects);
+      branchProjectsStatus = null;
+      hasLoadedBranchProjects = true;
       saveCache();
       recentStatus = null;
     } catch (error) {
@@ -1858,8 +1919,16 @@
       .qgqr-owned-filter { display: inline-flex; align-items: center; gap: 7px; color: var(--gl-text-color-subtle, #626b7d); cursor: pointer; font-size: 11.5px; user-select: none; }
       .qgqr-owned-checkbox { width: 15px; height: 15px; margin: 0; accent-color: #6d5bd0; cursor: pointer; }
       .qgqr-filter-hint { color: var(--gl-text-color-subtle, #7a8292); font-size: 10.5px; }
-      .qgqr-branch-note { margin: 0; border-bottom: 1px solid var(--gl-border-color-default, #e6e7eb); padding: 9px 14px; background: #fffbeb; color: #92400e; font-size: 10.5px; line-height: 1.45; }
-      .qgqr-branch-note[hidden] { display: none; }
+      .qgqr-branch-toolbar { display: flex; min-height: 38px; align-items: center; gap: 10px; border-bottom: 1px solid var(--gl-border-color-default, #e6e7eb); padding: 6px 12px; background: var(--gl-background-color-subtle, #fafbfc); color: var(--gl-text-color-subtle, #626b7d); font-size: 10px; }
+      .qgqr-branch-toolbar[hidden] { display: none; }
+      .qgqr-branch-legend { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; gap: 5px 9px; }
+      .qgqr-legend-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+      .qgqr-legend-dot { width: 7px; height: 7px; border-radius: 50%; }
+      .qgqr-legend-merged { background: #16a34a; }
+      .qgqr-legend-unmerged { background: #dc2626; }
+      .qgqr-legend-unavailable { background: #9ca3af; }
+      .qgqr-branch-help { display: grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; border-radius: 6px; color: var(--gl-text-color-subtle, #626b7d); }
+      .qgqr-branch-help .qgqr-icon { width: 14px; height: 14px; }
       .qgqr-list { max-height: calc(min(78vh, 740px) - 179px); margin: 0; padding: 8px; overflow-y: auto; list-style: none; scrollbar-width: thin; }
       .qgqr-item { display: flex; gap: 10px; margin: 2px 0; border: 1px solid transparent; border-radius: 11px; padding: 10px 11px; transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease; }
       .qgqr-item:hover { border-color: var(--gl-border-color-default, #e2e4e9); background: var(--gl-background-color-subtle, #fafafe); box-shadow: 0 2px 8px rgba(24,32,51,.05); }
@@ -1870,12 +1939,13 @@
       .qgqr-project-link { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; border-radius: 5px; color: var(--gl-text-color-link, #1f63b5); text-decoration: none; outline: none; }
       .qgqr-project-link:hover .qgqr-project-name, .qgqr-mr-link:hover { text-decoration: underline; }
       .qgqr-project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .qgqr-branch-project { border-color: var(--gl-border-color-default, #e2e4e9); background: var(--gl-background-color-subtle, #fafbfc); }
+      .qgqr-branch-project { border-color: var(--gl-border-color-default, #e2e4e9); padding: 8px 10px; background: var(--gl-background-color-subtle, #fafbfc); }
       .qgqr-branch-project-header { display: flex; min-width: 0; align-items: center; gap: 8px; }
-      .qgqr-branch-check { flex: 0 0 auto; border: 1px solid #93c5fd; border-radius: 7px; padding: 4px 8px; background: #eff6ff; color: #1d4ed8; cursor: pointer; font: inherit; font-size: 10.5px; font-weight: 700; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
+      .qgqr-branch-check { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border: 1px solid #93c5fd; border-radius: 8px; padding: 0; background: #eff6ff; color: #1d4ed8; cursor: pointer; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
       .qgqr-branch-check:hover { border-color: #60a5fa; background: #dbeafe; }
       .qgqr-branch-check:disabled { cursor: wait; opacity: .7; }
-      .qgqr-branch-check.qgqr-is-loading::before { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border: 1.5px solid rgba(29,78,216,.25); border-top-color: currentColor; border-radius: 50%; animation: qgqr-spin .7s linear infinite; content: ''; vertical-align: -1px; }
+      .qgqr-branch-check .qgqr-icon { width: 15px; height: 15px; }
+      .qgqr-branch-check.qgqr-is-loading .qgqr-icon { animation: qgqr-spin .7s linear infinite; }
       .qgqr-branch-message { color: var(--gl-text-color-subtle, #626b7d); font-size: 11px; }
       .qgqr-branch-message-error { color: #b91c1c; }
       .qgqr-branch-list { display: flex; flex-direction: column; gap: 7px; margin: 4px 0 0; padding: 0; list-style: none; }
@@ -1885,10 +1955,12 @@
       .qgqr-branch-link:hover { text-decoration: underline; }
       .qgqr-branch-date { flex: 0 0 auto; color: var(--gl-text-color-subtle, #7a8292); font-size: 10px; }
       .qgqr-branch-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-      .qgqr-branch-badge { border: 1px solid; border-radius: 999px; padding: 2px 6px; font-size: 9.5px; font-weight: 700; line-height: 1.35; }
-      .qgqr-branch-badge-merged { border-color: #86efac; background: #f0fdf4; color: #166534; }
-      .qgqr-branch-badge-unmerged { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+      .qgqr-branch-badge { min-width: 42px; border: 1px solid; border-radius: 999px; padding: 2px 7px; font-size: 9.5px; font-weight: 750; line-height: 1.35; text-align: center; text-transform: lowercase; }
+      .qgqr-branch-badge-merged { border-color: #22c55e; background: #dcfce7; color: #166534; }
+      .qgqr-branch-badge-unmerged { border-color: #ef4444; background: #fee2e2; color: #991b1b; }
       .qgqr-branch-badge-missing, .qgqr-branch-badge-unknown { border-color: #d1d5db; background: #f3f4f6; color: #4b5563; }
+      .qgqr-branch-badge-missing { border-style: dashed; text-decoration: line-through; }
+      .qgqr-branch-badge-unknown::after { margin-left: 2px; content: '?'; }
       .qgqr-branch-badge-checking { border-color: #fde68a; background: #fffbeb; color: #92400e; }
       .qgqr-favorite-button, .qgqr-more-button { display: grid; width: 27px; height: 25px; flex: 0 0 27px; place-items: center; border: 1px solid transparent; border-radius: 7px; padding: 0; background: transparent; color: var(--gl-text-color-subtle, #626b7d); cursor: pointer; transition: color .18s ease, background-color .18s ease, border-color .18s ease; }
       .qgqr-favorite-button:hover { border-color: #f4c55d; background: #fffbeb; color: #b45309; }
@@ -1914,7 +1986,7 @@
       .qgqr-detail, .qgqr-status { color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
       .qgqr-mr-link { color: var(--gl-text-color-link, #1f75cb); text-decoration: none; }
       .qgqr-status { display: block; padding: 11px 16px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); background: var(--gl-background-color-subtle, #fafbfc); }
-      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-check:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
+      .qgqr-toggle:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-check:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-branch-help:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
       @keyframes qgqr-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-spin { to { transform: rotate(360deg); } }
       @media (prefers-color-scheme: dark) {
@@ -1922,7 +1994,6 @@
         .qgqr-favorites-button.qgqr-active { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
         .qgqr-branches-button.qgqr-active { border-color: rgba(96,165,250,.45); background: rgba(37,99,235,.18); color: #93c5fd; }
         .qgqr-favorite-button:hover, .qgqr-favorite-button.qgqr-is-favorite { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
-        .qgqr-branch-note { background: rgba(146,64,14,.16); color: #fbbf24; }
         .qgqr-branch-check { border-color: rgba(96,165,250,.45); background: rgba(37,99,235,.18); color: #93c5fd; }
         .qgqr-branch-badge-merged { border-color: rgba(74,222,128,.4); background: rgba(22,101,52,.22); color: #86efac; }
         .qgqr-branch-badge-unmerged { border-color: rgba(248,113,113,.4); background: rgba(153,27,27,.2); color: #fca5a5; }
@@ -1931,7 +2002,7 @@
         .qgqr-type-fork { border-color: rgba(167,139,250,.4); background: rgba(109,40,217,.16); color: #c4b5fd; }
         .qgqr-type-upstream { border-color: rgba(96,165,250,.38); background: rgba(37,99,235,.14); color: #93c5fd; }
       }
-      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader, .qgqr-branch-check.qgqr-is-loading::before { animation: none; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+      @media (prefers-reduced-motion: reduce) { .qgqr-panel, .qgqr-is-spinning .qgqr-icon, .qgqr-search-loader, .qgqr-branch-check.qgqr-is-loading .qgqr-icon { animation: none; } * { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
       @media (max-width: 640px) { #${WIDGET_ID} { top: 62px; right: 8px; } .qgqr-toggle { padding: 7px 9px; } .qgqr-panel { width: min(480px, calc(100vw - 16px)); } }
     `;
     document.head.append(style);
@@ -2140,13 +2211,36 @@
     ownedFilter.append(ownedCheckbox, createElement('span', 'qgqr-owned-filter-label', t('ownedFilter')));
     searchOptions.append(ownedFilter, createElement('span', 'qgqr-filter-hint', t('ownedHint')));
     searchArea.append(searchBox, searchOptions);
-    const branchNote = createElement('p', 'qgqr-branch-note', t('branchStatusSemantics'));
-    branchNote.hidden = true;
+    const branchToolbar = createElement('div', 'qgqr-branch-toolbar');
+    branchToolbar.hidden = true;
+    const branchLegend = createElement('div', 'qgqr-branch-legend');
+    const createLegendItem = (status, textClass, translationKey) => {
+      const item = createElement('span', 'qgqr-legend-item');
+      item.append(
+        createElement('i', `qgqr-legend-dot qgqr-legend-${status}`),
+        createElement('span', textClass, t(translationKey)),
+      );
+      return item;
+    };
+    branchLegend.append(
+      createLegendItem('merged', 'qgqr-legend-merged-text', 'branchLegendMerged'),
+      createLegendItem('unmerged', 'qgqr-legend-unmerged-text', 'branchLegendUnmerged'),
+      createLegendItem(
+        'unavailable',
+        'qgqr-legend-unavailable-text',
+        'branchLegendUnavailable',
+      ),
+    );
+    const branchHelp = createElement('span', 'qgqr-branch-help');
+    branchHelp.setAttribute('role', 'img');
+    branchHelp.tabIndex = 0;
+    branchHelp.append(createIcon('info'));
+    branchToolbar.append(branchLegend, branchHelp);
     panel.append(
       header,
       settings,
       searchArea,
-      branchNote,
+      branchToolbar,
       createElement('ol', 'qgqr-list'),
       createElement('span', 'qgqr-status', statusText(recentStatus)),
     );
@@ -2160,11 +2254,12 @@
     });
     languageSelect.addEventListener('change', () => setLanguage(languageSelect.value));
     refreshButton.addEventListener('click', () => refreshData({ force: true }));
-    branchesButton.addEventListener('click', () => {
+    branchesButton.addEventListener('click', async () => {
       activeView = activeView === VIEW_BRANCHES ? VIEW_RECENT : VIEW_BRANCHES;
       settings.hidden = true;
       settingsButton.setAttribute('aria-expanded', 'false');
       renderWidget();
+      if (activeView === VIEW_BRANCHES) await loadBranchStatusProjects();
     });
     favoritesButton.addEventListener('click', () => {
       activeView = activeView === VIEW_FAVORITES ? VIEW_RECENT : VIEW_FAVORITES;

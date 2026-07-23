@@ -3,13 +3,13 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
-  buildBranchStatusProjects,
   buildRecentMrGroups,
   buildGlobalSearchFallbackPath,
   buildMyMergeRequestsUrl,
   buildNewMergeRequestUrl,
   buildPipelinesUrl,
   buildProjectSearchPath,
+  buildProjectsPath,
   buildRepositoryBranchPath,
   buildRepositoryComparePath,
   buildRepositoryBranchesPath,
@@ -31,6 +31,7 @@ const {
   readFavoriteProjects,
   resolvePreferredLanguage,
   saveFavoriteProjects,
+  selectRecentForkProjects,
   selectRecentBranches,
   toggleFavoriteProject,
   translate,
@@ -308,26 +309,20 @@ test('global search keeps API result order and applies the result limit', () => 
   assert.equal(groups[19].upstream.id, 20);
 });
 
-test('branch status projects prioritize favorites and deduplicate recent repositories', () => {
+test('recent fork projects keep API activity order, exclude standalone projects, and deduplicate', () => {
   const upstream = project(1, 'team/app');
   const fork = project(2, 'lucas/app', upstream);
-  const favoriteUpstream = project(3, 'team/favorite');
-  const favoriteFork = project(4, 'lucas/favorite', favoriteUpstream);
+  const otherUpstream = project(3, 'team/other');
+  const otherFork = project(4, 'lucas/other', otherUpstream);
   const standalone = project(5, 'team/standalone');
-  const recentGroups = [{
-    upstream,
-    forks: [fork],
-    mergeRequestCount: 1,
-    latestMergeRequest: mergeRequest(101, 12, 2, 1, '2026-07-15T01:00:00Z'),
-  }];
 
-  const result = buildBranchStatusProjects(
-    [favoriteFork, fork, standalone],
-    recentGroups,
-    10,
+  const result = selectRecentForkProjects(
+    [standalone, otherFork, fork, { ...otherFork, nameWithNamespace: 'duplicate' }],
+    2,
   );
 
-  assert.deepEqual(result.map(({ id }) => id), [favoriteFork.id, fork.id]);
+  assert.deepEqual(result.map(({ id }) => id), [otherFork.id, fork.id]);
+  assert.equal(result[0].nameWithNamespace, otherFork.nameWithNamespace);
 });
 
 function branch(name, committedAt, commitId = `${name}-commit`) {
@@ -361,8 +356,7 @@ test('normalizes same-origin branches and rejects unsafe branch data', () => {
   }, ORIGIN), null);
 });
 
-test('recent branches exclude environment branches and stale activity', () => {
-  const now = Date.parse('2026-07-23T00:00:00Z');
+test('recent branches exclude environment branches and keep latest commit order', () => {
   const branches = [
     branch('feature/newer', '2026-07-22T00:00:00Z'),
     branch('dev', '2026-07-21T00:00:00Z'),
@@ -372,7 +366,7 @@ test('recent branches exclude environment branches and stale activity', () => {
   ];
 
   assert.deepEqual(
-    selectRecentBranches(branches, now, 5).map(({ name }) => name),
+    selectRecentBranches(branches, 2).map(({ name }) => name),
     ['feature/newer', 'feature/older'],
   );
 });
@@ -395,6 +389,17 @@ test('branch status API paths encode project IDs and branch names', () => {
   assert.equal(compareUrl.searchParams.get('from'), 'dev');
   assert.equal(compareUrl.searchParams.get('to'), 'feature/status');
   assert.equal(compareUrl.searchParams.get('from_project_id'), '1');
+});
+
+test('owned projects path requests recent activity order for branch status repositories', () => {
+  const url = new URL(buildProjectsPath('owned'), ORIGIN);
+
+  assert.equal(url.pathname, '/api/v4/projects');
+  assert.equal(url.searchParams.get('owned'), 'true');
+  assert.equal(url.searchParams.get('order_by'), 'last_activity_at');
+  assert.equal(url.searchParams.get('sort'), 'desc');
+  assert.equal(url.searchParams.get('archived'), 'false');
+  assert.equal(url.searchParams.get('per_page'), '100');
 });
 
 test('branch merge status distinguishes merged, unmerged, and missing targets', () => {
@@ -515,8 +520,8 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
   assert.equal(
-    translate('zh-CN', 'updateInstalled', { version: '3.8.0' }),
-    'v3.8.0 已更新，重新加载后生效。',
+    translate('zh-CN', 'updateInstalled', { version: '3.9.0' }),
+    'v3.9.0 已更新，重新加载后生效。',
   );
   assert.equal(translate('zh-CN', 'favoritesTitle'), '收藏夹');
   assert.equal(
