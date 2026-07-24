@@ -489,6 +489,7 @@ test('branch merge request URL prefills the fork source and upstream master targ
   const url = new URL(buildUpstreamBranchMergeRequestUrl(fork, 'feature/login state'));
 
   assert.equal(url.pathname, '/team/app/-/merge_requests/new');
+  assert.equal(url.searchParams.get('change_branches'), 'true');
   assert.equal(url.searchParams.get('merge_request[source_project_id]'), '2');
   assert.equal(url.searchParams.get('merge_request[source_branch]'), 'feature/login state');
   assert.equal(url.searchParams.get('merge_request[target_project_id]'), '1');

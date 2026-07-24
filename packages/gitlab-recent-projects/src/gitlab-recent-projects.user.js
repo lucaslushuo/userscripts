@@ -769,6 +769,7 @@
   function buildUpstreamBranchMergeRequestUrl(project, sourceBranch, targetBranch = 'master') {
     if (!project.upstream) return null;
     const url = new URL(`${project.upstream.webUrl.replace(/\/$/, '')}/-/merge_requests/new`);
+    url.searchParams.set('change_branches', 'true');
     url.searchParams.set('merge_request[source_project_id]', String(project.id));
     url.searchParams.set('merge_request[source_branch]', sourceBranch);
     url.searchParams.set('merge_request[target_project_id]', String(project.upstream.id));
