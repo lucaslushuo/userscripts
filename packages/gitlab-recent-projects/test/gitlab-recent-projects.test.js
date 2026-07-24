@@ -22,6 +22,7 @@ const {
   enableOrigin,
   extractPublishedUserscriptVersion,
   getCrossProjectBranchMergeStatus,
+  getDefaultNavigationState,
   getOriginConfigurationError,
   getUpdateActionState,
   isGitLabPage,
@@ -548,6 +549,13 @@ test('browser primary language selects Chinese or English by default', () => {
   assert.equal(resolvePreferredLanguage('unsupported', []), 'en');
 });
 
+test('home navigation returns to the recent view and clears search', () => {
+  assert.deepEqual(getDefaultNavigationState(), {
+    activeView: 'recent',
+    searchQuery: '',
+  });
+});
+
 test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('zh-CN', 'minSearchCharacters', { count: 2 }), '请至少输入 2 个字符');
   assert.equal(translate('en', 'apiRequestFailed', { status: 401 }), 'GitLab API request failed (HTTP 401)');
@@ -561,6 +569,8 @@ test('translations interpolate dynamic status values in both languages', () => {
   );
   assert.equal(translate('zh-CN', 'appTitle'), 'gitcube');
   assert.equal(translate('en', 'appTitle'), 'gitcube');
+  assert.equal(translate('zh-CN', 'goHome'), '返回最近 MR 首页');
+  assert.equal(translate('en', 'goHome'), 'Back to recent MR repositories');
   assert.equal(translate('zh-CN', 'branchLegendMerged'), '已合入');
   assert.equal(translate('en', 'branchLegendUnavailable'), 'Unknown or missing');
   assert.equal(

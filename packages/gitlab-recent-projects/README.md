@@ -4,6 +4,8 @@
 
 面板主标题统一显示为 `gitcube`，当前功能通过副标题和右上角选中状态区分。
 
+面板左上角使用 Node G 作为 gitcube 的 Home 图标。点击图标会关闭设置、退出收藏夹或分支状态、清空搜索，并回到默认的最近 MR 首页。
+
 - 安装地址：<https://lucaslushuo.github.io/userscripts/gitlab-recent-projects.user.js>
 - 源码：[src/gitlab-recent-projects.user.js](src/gitlab-recent-projects.user.js)
 - 测试：[test/gitlab-recent-projects.test.js](test/gitlab-recent-projects.test.js)

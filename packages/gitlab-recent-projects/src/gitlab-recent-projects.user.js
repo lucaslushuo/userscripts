@@ -61,6 +61,7 @@
       toggleLabel: '最近 MR 仓库',
       panelAriaLabel: 'GitLab 最近 MR 仓库、收藏夹、分支状态和仓库搜索',
       appTitle: 'gitcube',
+      goHome: '返回最近 MR 首页',
       recentSubtitle: '按 MR 创建时间排列 · 最多 20 组',
       globalSearchSubtitle: '搜索整个 GitLab · 同组展示 Fork / Upstream',
       ownedSearchSubtitle: '仅我的仓库 · 同组展示对应 Upstream',
@@ -162,6 +163,7 @@
       toggleLabel: 'Recent MR repos',
       panelAriaLabel: 'GitLab recent MR repositories, favorites, branch status, and repository search',
       appTitle: 'gitcube',
+      goHome: 'Back to recent MR repositories',
       recentSubtitle: 'Sorted by MR creation time · Up to 20 groups',
       globalSearchSubtitle: 'Search all GitLab · Fork / Upstream grouped together',
       ownedSearchSubtitle: 'My repositories only · Include their Upstream',
@@ -341,6 +343,10 @@
     return visibilityState === 'visible'
       && updateStatus !== 'available'
       && !awaitingReload;
+  }
+
+  function getDefaultNavigationState() {
+    return { activeView: VIEW_RECENT, searchQuery: '' };
   }
 
   function isGitLabPage(documentObject) {
@@ -907,6 +913,7 @@
       enableOrigin,
       extractPublishedUserscriptVersion,
       getCrossProjectBranchMergeStatus,
+      getDefaultNavigationState,
       getUpdateActionState,
       getOriginConfigurationError,
       inferTargetProject,
@@ -1466,6 +1473,13 @@
         ['circle', { cx: '18', cy: '18', r: '3' }],
         ['path', { d: 'M6 21V9a9 9 0 0 0 9 9' }],
       ],
+      gitcube: [
+        ['path', { d: 'M19 7.5A8 8 0 1 0 19 16v-4h-7' }],
+        ['path', { d: 'M12 12h7' }],
+        ['circle', { cx: '19', cy: '7.5', r: '1.4' }],
+        ['circle', { cx: '12', cy: '12', r: '1.4' }],
+        ['circle', { cx: '19', cy: '16', r: '1.4' }],
+      ],
       refresh: [
         ['path', { d: 'M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5' }],
         ['path', { d: 'M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5' }],
@@ -1876,9 +1890,9 @@
     widget.querySelector('.qgqr-update-tag-label').textContent = t('updateTag');
     const panel = widget.querySelector('.qgqr-panel');
     panel.setAttribute('aria-label', t('panelAriaLabel'));
-    widget.querySelector('.qgqr-header-icon').replaceChildren(
-      createIcon(isBranchesView ? 'branch' : (isFavoritesView ? 'star' : 'merge')),
-    );
+    const homeButton = widget.querySelector('.qgqr-home-button');
+    homeButton.title = t('goHome');
+    homeButton.setAttribute('aria-label', t('goHome'));
     widget.querySelector('.qgqr-title').textContent = t('appTitle');
     const branchesButton = widget.querySelector('.qgqr-branches-button');
     const branchesButtonLabel = t(isBranchesView ? 'showRecentProjects' : 'openBranches');
@@ -2008,7 +2022,10 @@
       .qgqr-panel::before { display: block; height: 3px; background: linear-gradient(90deg, #6d5bd0, #8b5cf6 50%, #3b82f6); content: ''; }
       .qgqr-panel[hidden], .qgqr-status[hidden] { display: none; }
       .qgqr-header { display: flex; align-items: center; gap: 11px; padding: 14px 16px; border-bottom: 1px solid var(--gl-border-color-default, #e6e7eb); background: linear-gradient(180deg, rgba(109,91,208,.055), transparent); }
-      .qgqr-header-icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: 10px; background: #ede9fe; color: #5943b6; }
+      .qgqr-home-button { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 0; border-radius: 10px; padding: 0; background: #ede9fe; color: #5943b6; cursor: pointer; transition: background-color .18s ease, color .18s ease, box-shadow .18s ease; }
+      .qgqr-home-button:hover { background: #ddd6fe; color: #4f3aaa; box-shadow: 0 5px 14px rgba(89,67,182,.22); }
+      .qgqr-home-button:active { background: #cec5fb; color: #432f98; box-shadow: 0 2px 7px rgba(89,67,182,.18); }
+      .qgqr-home-button .qgqr-icon { width: 21px; height: 21px; }
       .qgqr-heading { min-width: 0; flex: 1; }
       .qgqr-title { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.015em; }
       .qgqr-subtitle { display: block; margin-top: 1px; color: var(--gl-text-color-subtle, #626b7d); font-size: 12px; }
@@ -2146,13 +2163,15 @@
       .qgqr-detail, .qgqr-status { color: var(--gl-text-color-subtle, #626b7d); font-size: 11.5px; }
       .qgqr-mr-link { color: var(--gl-text-color-link, #1f75cb); text-decoration: none; }
       .qgqr-status { display: block; padding: 11px 16px; border-top: 1px solid var(--gl-border-color-default, #e6e7eb); background: var(--gl-background-color-subtle, #fafbfc); }
-      .qgqr-toggle:focus-visible, .qgqr-update-tag:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-mr:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-branch-help:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
+      .qgqr-toggle:focus-visible, .qgqr-update-tag:focus-visible, .qgqr-home-button:focus-visible, .qgqr-action:focus-visible, .qgqr-project-link:focus-visible, .qgqr-mr-link:focus-visible, .qgqr-search-clear:focus-visible, .qgqr-favorite-button:focus-visible, .qgqr-more-button:focus-visible, .qgqr-menu-action:focus-visible, .qgqr-branch-mr:focus-visible, .qgqr-branch-link:focus-visible, .qgqr-branch-help:focus-visible, .qgqr-enable-origin:focus-visible, .qgqr-disable-origin:focus-visible, .qgqr-origin-input:focus-visible, .qgqr-language-select:focus-visible, .qgqr-update-action:focus-visible, .qgqr-repository-link:focus-visible { outline: 2px solid #7c6cf2; outline-offset: 2px; }
       @keyframes qgqr-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-update-tag-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes qgqr-spin { to { transform: rotate(360deg); } }
       @keyframes qgqr-dot-wave { 0%, 60%, 100% { opacity: .24; } 30% { opacity: .92; } }
       @media (prefers-color-scheme: dark) {
-        .qgqr-count, .qgqr-header-icon { background: rgba(139,92,246,.2); color: #c4b5fd; }
+        .qgqr-count, .qgqr-home-button { background: rgba(139,92,246,.2); color: #c4b5fd; }
+        .qgqr-home-button:hover { background: rgba(139,92,246,.32); color: #ddd6fe; box-shadow: 0 5px 14px rgba(76,61,174,.28); }
+        .qgqr-home-button:active { background: rgba(109,91,208,.38); color: #ede9fe; }
         .qgqr-favorites-button.qgqr-active { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
         .qgqr-branches-button.qgqr-active { border-color: rgba(96,165,250,.45); background: rgba(37,99,235,.18); color: #93c5fd; }
         .qgqr-favorite-button:hover, .qgqr-favorite-button.qgqr-is-favorite { border-color: rgba(245,158,11,.45); background: rgba(180,83,9,.2); color: #fbbf24; }
@@ -2247,14 +2266,17 @@
     panel.setAttribute('aria-label', t('panelAriaLabel'));
     panel.hidden = true;
     const header = createElement('header', 'qgqr-header');
-    const headerIcon = createElement('span', 'qgqr-header-icon');
-    headerIcon.append(createIcon('merge'));
+    const homeButton = createElement('button', 'qgqr-home-button');
+    homeButton.type = 'button';
+    homeButton.title = t('goHome');
+    homeButton.setAttribute('aria-label', t('goHome'));
+    homeButton.append(createIcon('gitcube'));
     const heading = createElement('div', 'qgqr-heading');
     heading.append(
       createElement('h2', 'qgqr-title', t('appTitle')),
       createElement('span', 'qgqr-subtitle', t('recentSubtitle')),
     );
-    header.append(headerIcon, heading);
+    header.append(homeButton, heading);
     const refreshButton = createElement('button', 'qgqr-action qgqr-refresh');
     refreshButton.type = 'button';
     refreshButton.title = t('refreshRecent');
@@ -2418,6 +2440,15 @@
       panel.hidden = !panel.hidden;
       toggle.setAttribute('aria-expanded', String(!panel.hidden));
       if (panel.hidden) closeProjectMenus(widget);
+    });
+    homeButton.addEventListener('click', () => {
+      const defaultNavigationState = getDefaultNavigationState();
+      activeView = defaultNavigationState.activeView;
+      settings.hidden = true;
+      settingsButton.setAttribute('aria-expanded', 'false');
+      searchInput.value = defaultNavigationState.searchQuery;
+      closeProjectMenus(widget);
+      updateSearch(defaultNavigationState.searchQuery);
     });
     languageSelect.addEventListener('change', () => setLanguage(languageSelect.value));
     refreshButton.addEventListener('click', async () => {
