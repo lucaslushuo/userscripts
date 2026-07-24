@@ -131,8 +131,8 @@
       copyRepositoryUrlFailed: '复制失败，请检查浏览器权限',
       settings: '域名设置',
       settingsUpdateAvailable: '域名设置，有脚本更新可用',
-      updateTag: '有新版本',
-      updateTagLabel: '安装脚本更新 v{version}',
+      updateTag: '有更新',
+      updateTagLabel: '打开设置安装脚本更新 v{version}',
       settingsTitle: '当前 GitLab 站点已启用',
       settingsDescription: '脚本仅在这个 GitLab 域名下读取同源数据。',
       disableCurrentOrigin: '停用当前域名',
@@ -232,8 +232,8 @@
       copyRepositoryUrlFailed: 'Copy failed. Check your browser permissions',
       settings: 'Domain settings',
       settingsUpdateAvailable: 'Domain settings, script update available',
-      updateTag: 'UPDATE AVAILABLE',
-      updateTagLabel: 'Install script update v{version}',
+      updateTag: 'UPDATE',
+      updateTagLabel: 'Open settings to install script update v{version}',
       settingsTitle: 'This GitLab site is enabled',
       settingsDescription: 'The script only reads same-origin data from this GitLab domain.',
       disableCurrentOrigin: 'Disable this domain',
@@ -431,6 +431,12 @@
     } catch {
       return false;
     }
+  }
+
+  function shouldUseCachedUserscriptUpdate(cachedUpdate, force, currentTime = Date.now()) {
+    return !force
+      && cachedUpdate !== null
+      && currentTime - cachedUpdate.checkedAt < UPDATE_CHECK_INTERVAL_MS;
   }
 
   function requestPublishedUserscript() {
@@ -915,6 +921,7 @@
       selectRecentForkProjects,
       selectRecentBranches,
       shouldPollForUserscriptUpdates,
+      shouldUseCachedUserscriptUpdate,
       toggleFavoriteProject,
       translate,
     };
@@ -1021,9 +1028,7 @@
     }
 
     const cachedUpdate = readUpdateCache(window.localStorage);
-    if (!force
-      && cachedUpdate
-      && Date.now() - cachedUpdate.checkedAt < UPDATE_CHECK_INTERVAL_MS) {
+    if (shouldUseCachedUserscriptUpdate(cachedUpdate, force)) {
       applyPublishedVersion(cachedUpdate.latestVersion);
       renderWidget();
       return;
@@ -1467,11 +1472,6 @@
       arrow: [
         ['path', { d: 'M5 12h14' }],
         ['path', { d: 'm13 6 6 6-6 6' }],
-      ],
-      download: [
-        ['path', { d: 'M12 3v12' }],
-        ['path', { d: 'm7 10 5 5 5-5' }],
-        ['path', { d: 'M5 21h14' }],
       ],
       search: [
         ['circle', { cx: '11', cy: '11', r: '8' }],
@@ -1995,11 +1995,10 @@
       #${WIDGET_ID} svg, #${WIDGET_ID} svg * { fill: none !important; stroke: currentColor !important; stroke-width: 1.75 !important; }
       .qgqr-icon { width: 18px; height: 18px; flex: 0 0 18px; }
       .qgqr-inline-icon { width: 13px; height: 13px; margin-left: 3px; vertical-align: -2px; }
-      .qgqr-update-tag { position: absolute; top: -18px; right: 10px; z-index: 2; display: inline-flex; min-height: 28px; align-items: center; gap: 6px; border: 1px solid #8f7cff; border-radius: 999px; padding: 5px 11px; background: #7357f6; color: #fff; box-shadow: 0 5px 14px rgba(82,56,214,.34), inset 0 1px 0 rgba(255,255,255,.28); cursor: pointer; font-size: 10.5px; font-weight: 750; letter-spacing: .025em; line-height: 1; text-decoration: none; white-space: nowrap; animation: qgqr-update-tag-enter .18s ease-out; transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease; }
-      .qgqr-update-tag:hover { border-color: #806cf4; background: #6247e8; color: #fff; box-shadow: 0 6px 17px rgba(82,56,214,.43), inset 0 1px 0 rgba(255,255,255,.2); text-decoration: none; }
-      .qgqr-update-tag:active { border-color: #6c55df; background: #5238d6; box-shadow: 0 3px 9px rgba(82,56,214,.36), inset 0 1px 0 rgba(255,255,255,.16); }
+      .qgqr-update-tag { position: absolute; top: -11px; right: 10px; z-index: 2; display: inline-flex; min-height: 20px; align-items: center; border: 1px solid #8f7cff; border-radius: 999px; padding: 3px 8px; background: #7357f6; color: #fff; box-shadow: 0 3px 9px rgba(82,56,214,.28), inset 0 1px 0 rgba(255,255,255,.24); cursor: pointer; font: inherit; font-size: 9px; font-weight: 750; letter-spacing: .045em; line-height: 1; white-space: nowrap; animation: qgqr-update-tag-enter .18s ease-out; transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease; }
+      .qgqr-update-tag:hover { border-color: #806cf4; background: #6247e8; color: #fff; box-shadow: 0 4px 11px rgba(82,56,214,.36), inset 0 1px 0 rgba(255,255,255,.18); }
+      .qgqr-update-tag:active { border-color: #6c55df; background: #5238d6; box-shadow: 0 2px 6px rgba(82,56,214,.3), inset 0 1px 0 rgba(255,255,255,.14); }
       .qgqr-update-tag[hidden] { display: none; }
-      .qgqr-update-tag .qgqr-icon { width: 14px; height: 14px; flex-basis: 14px; }
       .qgqr-toggle { display: flex; align-items: center; gap: 8px; min-height: 40px; border: 1px solid rgba(99,102,241,.28); border-radius: 12px; padding: 8px 10px 8px 12px; background: var(--gl-background-color-default, rgba(255,255,255,.96)); color: var(--gl-text-color-default, #172033); box-shadow: 0 6px 20px rgba(24,32,51,.13), 0 1px 2px rgba(24,32,51,.08); cursor: pointer; font-weight: 650; letter-spacing: -.01em; backdrop-filter: blur(14px); transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease; }
       .qgqr-toggle:hover { border-color: #7c6cf2; background: var(--gl-background-color-subtle, #f8f7ff); box-shadow: 0 9px 26px rgba(76,61,174,.18), 0 1px 2px rgba(24,32,51,.08); }
       .qgqr-toggle .qgqr-icon { color: #6d5bd0; }
@@ -2228,15 +2227,10 @@
     addStyles();
     const widget = createElement('div');
     widget.id = WIDGET_ID;
-    const updateTag = createElement('a', 'qgqr-update-tag');
-    updateTag.href = PUBLISHED_SCRIPT_URL;
-    updateTag.target = '_blank';
-    updateTag.rel = 'noopener noreferrer';
+    const updateTag = createElement('button', 'qgqr-update-tag');
+    updateTag.type = 'button';
     updateTag.hidden = true;
-    updateTag.append(
-      createIcon('download'),
-      createElement('span', 'qgqr-update-tag-label', t('updateTag')),
-    );
+    updateTag.append(createElement('span', 'qgqr-update-tag-label', t('updateTag')));
     const toggle = createElement('button', 'qgqr-toggle');
     toggle.type = 'button';
     toggle.append(
@@ -2450,7 +2444,14 @@
       updateAwaitingReload = true;
       renderWidget();
     };
-    updateTag.addEventListener('click', markUpdateAwaitingReload);
+    updateTag.addEventListener('click', () => {
+      closeProjectMenus(widget);
+      panel.hidden = false;
+      settings.hidden = false;
+      toggle.setAttribute('aria-expanded', 'true');
+      settingsButton.setAttribute('aria-expanded', 'true');
+      renderWidget();
+    });
     installUpdateLink.addEventListener('click', markUpdateAwaitingReload);
     reloadAfterUpdateButton.addEventListener('click', () => window.location.reload());
     settingsButton.addEventListener('click', () => {
@@ -2511,7 +2512,15 @@
     )) return;
     void checkForUserscriptUpdates();
   };
+  const checkForUserscriptUpdatesOnTabReturn = () => {
+    if (!shouldPollForUserscriptUpdates(
+      document.visibilityState,
+      updateState.status,
+      updateAwaitingReload,
+    )) return;
+    void checkForUserscriptUpdates({ force: true });
+  };
   pollForUserscriptUpdates();
   window.setInterval(pollForUserscriptUpdates, UPDATE_CHECK_INTERVAL_MS);
-  document.addEventListener('visibilitychange', pollForUserscriptUpdates);
+  document.addEventListener('visibilitychange', checkForUserscriptUpdatesOnTabReturn);
 })();

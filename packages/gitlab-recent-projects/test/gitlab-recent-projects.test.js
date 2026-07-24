@@ -36,6 +36,7 @@ const {
   selectRecentForkProjects,
   selectRecentBranches,
   shouldPollForUserscriptUpdates,
+  shouldUseCachedUserscriptUpdate,
   toggleFavoriteProject,
   translate,
 } = require('../src/gitlab-recent-projects.user.js');
@@ -551,8 +552,8 @@ test('translations interpolate dynamic status values in both languages', () => {
   assert.equal(translate('en', 'apiRequestFailed', { status: 401 }), 'GitLab API request failed (HTTP 401)');
   assert.equal(translate('zh-CN', 'repositoryUrlCopied'), '已复制仓库地址');
   assert.equal(translate('en', 'copyRepositoryUrl'), 'Copy repository URL');
-  assert.equal(translate('zh-CN', 'updateTag'), '有新版本');
-  assert.equal(translate('en', 'updateTag'), 'UPDATE AVAILABLE');
+  assert.equal(translate('zh-CN', 'updateTag'), '有更新');
+  assert.equal(translate('en', 'updateTag'), 'UPDATE');
   assert.equal(
     translate('zh-CN', 'updateInstalled', { version: '3.14.0' }),
     'v3.14.0 已更新，重新加载后生效。',
@@ -595,4 +596,12 @@ test('update polling runs only for visible pages without a pending update', () =
   assert.equal(shouldPollForUserscriptUpdates('hidden', 'current', false), false);
   assert.equal(shouldPollForUserscriptUpdates('visible', 'available', false), false);
   assert.equal(shouldPollForUserscriptUpdates('visible', 'current', true), false);
+});
+
+test('tab-return update checks bypass the polling cache', () => {
+  const cachedUpdate = { checkedAt: 1_000, latestVersion: '3.15.1' };
+
+  assert.equal(shouldUseCachedUserscriptUpdate(cachedUpdate, false, 1_001), true);
+  assert.equal(shouldUseCachedUserscriptUpdate(cachedUpdate, true, 1_001), false);
+  assert.equal(shouldUseCachedUserscriptUpdate(null, false, 1_001), false);
 });
